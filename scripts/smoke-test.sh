@@ -4,7 +4,7 @@
 
 set -e
 
-API_URL="${API_URL:-https://api.atomicip.io}"
+API_URL="${API_URL:-https://api.swapit.io}"
 NETWORK="${NETWORK:-testnet}"
 
 echo "=== Running Smoke Tests ==="

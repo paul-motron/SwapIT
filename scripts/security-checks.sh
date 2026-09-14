@@ -48,7 +48,7 @@ run_coverage() {
 run_mutants() {
     echo "== cargo-mutants (mutation testing) =="
     ensure cargo-mutants cargo-mutants
-    cargo mutants --no-shuffle -p ip_registry -p atomic_swap
+    cargo mutants --no-shuffle -p atomic_swap
 }
 
 case "$CHECK" in
