@@ -1,7 +1,7 @@
 {
-  "name": "atomicip",
+  "name": "swapit",
   "version": "1.0.0",
-  "description": "Atomic Patent - Decentralized IP Registry on Stellar Soroban",
+  "description": "SwapIT - a trustless atomic swap platform on Stellar Soroban",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,10 +13,11 @@
     "blockchain",
     "stellar",
     "soroban",
-    "intellectual-property",
-    "atomic-swap"
+    "atomic-swap",
+    "escrow",
+    "defi"
   ],
-  "author": "Atomic Patent Contributors",
+  "author": "SwapIT Contributors",
   "license": "MIT",
   "devDependencies": {
     "jest": "^29.7.0"
