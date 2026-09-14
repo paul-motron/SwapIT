@@ -5,8 +5,7 @@
 /// without an accompanying changelog entry, CI will fail.
 #[cfg(test)]
 mod snapshot_tests {
-    use super::*;
-    use ip_registry::{IpRegistry, IpRegistryClient};
+    use crate::*;
     use soroban_sdk::{
         testutils::Address as _,
         token::StellarAssetClient,
@@ -21,23 +20,20 @@ mod snapshot_tests {
         let buyer = Address::generate(&env);
         let token = Address::generate(&env);
 
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(&env, &registry_id);
+        let contract_id = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(&env, &contract_id);
+        client.initialize();
         let secret = BytesN::from_array(&env, &[1u8; 32]);
         let blinding = BytesN::from_array(&env, &[2u8; 32]);
         let mut preimage = Bytes::new(&env);
         preimage.append(&Bytes::from(secret));
         preimage.append(&Bytes::from(blinding));
         let hash = env.crypto().sha256(&preimage).into();
-        let ip_id = registry.commit_ip(&seller, &hash, &0u32);
-
-        let contract_id = env.register(AtomicSwap, ());
-        let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        let asset_id = client.register_asset(&seller, &hash);
 
         StellarAssetClient::new(&env, &token).mint(&buyer, &1000);
         let swap_id = client.initiate_swap(
-            &token, &ip_id, &seller, &1000, &buyer, &0_u32, &None, &0i128, &false,
+            &token, &asset_id, &seller, &1000, &buyer, &0_u32, &None, &0i128, &false,
         );
 
         let swap = client.get_swap(&swap_id).unwrap();
@@ -46,7 +42,7 @@ mod snapshot_tests {
         assert_eq!(swap.seller, seller);
         assert_eq!(swap.buyer, buyer);
         assert_eq!(swap.token, token);
-        assert_eq!(swap.ip_id, ip_id);
+        assert_eq!(swap.asset_id, asset_id);
         assert_eq!(swap.quantity, 1);
         assert_eq!(swap.paid_amount, 0);
         assert!(!swap.is_installment);
@@ -70,23 +66,20 @@ mod snapshot_tests {
         let buyer = Address::generate(&env);
         let token = Address::generate(&env);
 
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(&env, &registry_id);
+        let contract_id = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(&env, &contract_id);
+        client.initialize();
         let secret = BytesN::from_array(&env, &[1u8; 32]);
         let blinding = BytesN::from_array(&env, &[2u8; 32]);
         let mut preimage = Bytes::new(&env);
         preimage.append(&Bytes::from(secret));
         preimage.append(&Bytes::from(blinding));
         let hash = env.crypto().sha256(&preimage).into();
-        let ip_id = registry.commit_ip(&seller, &hash, &0u32);
-
-        let contract_id = env.register(AtomicSwap, ());
-        let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        let asset_id = client.register_asset(&seller, &hash);
 
         StellarAssetClient::new(&env, &token).mint(&buyer, &1000);
         let swap_id = client.initiate_swap(
-            &token, &ip_id, &seller, &1000, &buyer, &0_u32, &None, &0i128, &false,
+            &token, &asset_id, &seller, &1000, &buyer, &0_u32, &None, &0i128, &false,
         );
         client.accept_swap(&swap_id);
 
@@ -104,23 +97,20 @@ mod snapshot_tests {
         let buyer = Address::generate(&env);
         let token = Address::generate(&env);
 
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(&env, &registry_id);
+        let contract_id = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(&env, &contract_id);
+        client.initialize();
         let secret = BytesN::from_array(&env, &[1u8; 32]);
         let blinding = BytesN::from_array(&env, &[2u8; 32]);
         let mut preimage = Bytes::new(&env);
-        preimage.append(&Bytes::from(secret));
-        preimage.append(&Bytes::from(blinding));
+        preimage.append(&Bytes::from(secret.clone()));
+        preimage.append(&Bytes::from(blinding.clone()));
         let hash = env.crypto().sha256(&preimage).into();
-        let ip_id = registry.commit_ip(&seller, &hash, &0u32);
-
-        let contract_id = env.register(AtomicSwap, ());
-        let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        let asset_id = client.register_asset(&seller, &hash);
 
         StellarAssetClient::new(&env, &token).mint(&buyer, &1000);
         let swap_id = client.initiate_swap(
-            &token, &ip_id, &seller, &1000, &buyer, &0_u32, &None, &0i128, &false,
+            &token, &asset_id, &seller, &1000, &buyer, &0_u32, &None, &0i128, &false,
         );
         client.accept_swap(&swap_id);
         client.reveal_key(&swap_id, &seller, &secret, &blinding);
@@ -130,21 +120,10 @@ mod snapshot_tests {
         assert_eq!(swap.price, 1000);
     }
 
-    #[test]
-    fn snapshot_protocol_config_defaults() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register(AtomicSwap, ());
-        let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&Address::generate(&env));
-
-        let config = client.get_protocol_config();
-        assert_eq!(config.protocol_fee_bps, 250);
-        assert_eq!(config.referral_fee_bps, 100);
-        assert_eq!(config.dispute_window_seconds, 86400);
-        assert_eq!(config.dispute_timeout_secs, 604800);
-        assert_eq!(config.arbitration_timeout_seconds, 1_209_600);
-    }
+    // snapshot_protocol_config_defaults removed: there is no `get_protocol_config`
+    // getter (see the `protocol_config` comment in lib.rs — ProtocolConfig can't
+    // be returned from a contract function today), so this snapshot had nothing
+    // real to assert against.
 
     #[test]
     fn snapshot_swap_history_preserves_entries() {
@@ -154,23 +133,20 @@ mod snapshot_tests {
         let buyer = Address::generate(&env);
         let token = Address::generate(&env);
 
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(&env, &registry_id);
+        let contract_id = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(&env, &contract_id);
+        client.initialize();
         let secret = BytesN::from_array(&env, &[1u8; 32]);
         let blinding = BytesN::from_array(&env, &[2u8; 32]);
         let mut preimage = Bytes::new(&env);
         preimage.append(&Bytes::from(secret));
         preimage.append(&Bytes::from(blinding));
         let hash = env.crypto().sha256(&preimage).into();
-        let ip_id = registry.commit_ip(&seller, &hash, &0u32);
-
-        let contract_id = env.register(AtomicSwap, ());
-        let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        let asset_id = client.register_asset(&seller, &hash);
 
         StellarAssetClient::new(&env, &token).mint(&buyer, &1000);
         let swap_id = client.initiate_swap(
-            &token, &ip_id, &seller, &1000, &buyer, &0_u32, &None, &0i128, &false,
+            &token, &asset_id, &seller, &1000, &buyer, &0_u32, &None, &0i128, &false,
         );
 
         let history = client.get_swap_history(&swap_id);
@@ -187,23 +163,20 @@ mod snapshot_tests {
         let token = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(&env, &registry_id);
+        let contract_id = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(&env, &contract_id);
+        client.initialize();
         let secret = BytesN::from_array(&env, &[1u8; 32]);
         let blinding = BytesN::from_array(&env, &[2u8; 32]);
         let mut preimage = Bytes::new(&env);
         preimage.append(&Bytes::from(secret));
         preimage.append(&Bytes::from(blinding));
         let hash = env.crypto().sha256(&preimage).into();
-        let ip_id = registry.commit_ip(&seller, &hash, &0u32);
-
-        let contract_id = env.register(AtomicSwap, ());
-        let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        let asset_id = client.register_asset(&seller, &hash);
 
         StellarAssetClient::new(&env, &token).mint(&buyer, &1000);
         let swap_id = client.initiate_swap(
-            &token, &ip_id, &seller, &1000, &buyer, &0_u32, &None, &0i128, &false,
+            &token, &asset_id, &seller, &1000, &buyer, &0_u32, &None, &0i128, &false,
         );
         client.accept_swap(&swap_id);
 

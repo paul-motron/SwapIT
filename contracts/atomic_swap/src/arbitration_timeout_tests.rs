@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod arbitration_timeout_tests {
-    use ip_registry::{IpRegistry, IpRegistryClient};
     use soroban_sdk::{
         testutils::{Address as _, Ledger},
         token::StellarAssetClient,
@@ -11,9 +10,7 @@ mod arbitration_timeout_tests {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    fn setup_registry(env: &Env, owner: &Address) -> (Address, u64, BytesN<32>, BytesN<32>) {
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(env, &registry_id);
+    fn register_test_asset(env: &Env, client: &AtomicSwapClient, owner: &Address) -> (u64, BytesN<32>, BytesN<32>) {
 
         let secret = BytesN::from_array(env, &[0xAAu8; 32]);
         let blinding = BytesN::from_array(env, &[0xBBu8; 32]);
@@ -23,8 +20,8 @@ mod arbitration_timeout_tests {
         preimage.append(&Bytes::from(blinding.clone()));
         let commitment_hash: BytesN<32> = env.crypto().sha256(&preimage).into();
 
-        let ip_id = registry.commit_ip(owner, &commitment_hash);
-        (registry_id, ip_id, secret, blinding)
+        let asset_id = client.register_asset(owner, &commitment_hash);
+        (asset_id, secret, blinding)
     }
 
     fn setup_token(env: &Env, admin: &Address, recipient: &Address, amount: i128) -> Address {
@@ -39,15 +36,16 @@ mod arbitration_timeout_tests {
     fn setup_disputed_swap(env: &Env) -> (AtomicSwapClient, u64, Address, Address) {
         let seller = Address::generate(env);
         let buyer = Address::generate(env);
-        let (registry_id, ip_id, _, _) = setup_registry(env, &seller);
-        let token_id = setup_token(env, &seller, &buyer, 1_000_000);
 
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(env, &contract_id);
-        client.initialize(&registry_id);
+        client.initialize();
+
+        let (asset_id, _, _) = register_test_asset(env, &client, &seller);
+        let token_id = setup_token(env, &seller, &buyer, 1_000_000);
 
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &1000i128, &buyer,
+            &token_id, &asset_id, &seller, &1000i128, &buyer,
             &0u32, &None, &0i128, &false,
         );
         client.accept_swap(&swap_id);

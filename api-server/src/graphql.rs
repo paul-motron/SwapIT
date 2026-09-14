@@ -642,13 +642,13 @@ impl SubscriptionRoot {
 // ── Subscription Broadcaster ──────────────────────────────────────────────────
 
 /// Redis key names backing each event type's stream. Namespaced under
-/// `atomicip:` and capped at `STREAM_MAXLEN` entries so the stream also
+/// `swapit:` and capped at `STREAM_MAXLEN` entries so the stream also
 /// serves as the reconnect/backfill buffer (see `backfill_stream`).
-const STREAM_SWAP_STATUS_CHANGED: &str  = "atomicip:swap_status_changed";
-const STREAM_IP_COMMITTED: &str         = "atomicip:ip_committed";
-const STREAM_SWAP_INITIATED: &str       = "atomicip:swap_initiated";
-const STREAM_SWAP_COMPLETED: &str       = "atomicip:swap_completed";
-const STREAM_CATEGORY_ASSIGNED: &str    = "atomicip:category_assigned";
+const STREAM_SWAP_STATUS_CHANGED: &str  = "swapit:swap_status_changed";
+const STREAM_IP_COMMITTED: &str         = "swapit:ip_committed";
+const STREAM_SWAP_INITIATED: &str       = "swapit:swap_initiated";
+const STREAM_SWAP_COMPLETED: &str       = "swapit:swap_completed";
+const STREAM_CATEGORY_ASSIGNED: &str    = "swapit:category_assigned";
 const ALL_STREAMS: [&str; 5] = [
     STREAM_SWAP_STATUS_CHANGED,
     STREAM_IP_COMMITTED,

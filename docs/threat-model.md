@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document analyzes potential attack vectors in the Atomic Patent swap mechanism and documents mitigations.
+This document analyzes potential attack vectors in the SwapIT swap mechanism and documents mitigations.
 
 ## Attack Scenarios
 

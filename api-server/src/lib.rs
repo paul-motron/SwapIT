@@ -1,4 +1,4 @@
-//! # Atomic Patent API
+//! # SwapIT API
 //!
 //! A decentralized Intellectual Property registry built on Stellar Soroban smart contracts.
 //!

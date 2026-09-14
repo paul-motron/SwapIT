@@ -13,7 +13,6 @@
 #[cfg(test)]
 mod oracle_tests {
     use ed25519_dalek::{Signer, SigningKey};
-    use ip_registry::{IpRegistry, IpRegistryClient};
     use soroban_sdk::{
         contract, contractimpl,
         testutils::{Address as _, Ledger},
@@ -106,18 +105,20 @@ mod oracle_tests {
 
     // ── Test Helpers ──────────────────────────────────────────────────────────
 
-    /// Registers an IP and returns (registry_id, ip_id, secret, blinding).
+    /// Deploys the swap contract, registers an asset commitment for `owner`,
+    /// and returns (contract_id, asset_id, secret, blinding).
     fn setup_registry(env: &Env, owner: &Address) -> (Address, u64, BytesN<32>, BytesN<32>) {
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(env, &registry_id);
+        let contract_id = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(env, &contract_id);
+        client.initialize();
         let secret = BytesN::from_array(env, &[0xAAu8; 32]);
         let blinding = BytesN::from_array(env, &[0xBBu8; 32]);
         let mut preimage = Bytes::new(env);
         preimage.append(&Bytes::from(secret.clone()));
         preimage.append(&Bytes::from(blinding.clone()));
         let hash: BytesN<32> = env.crypto().sha256(&preimage).into();
-        let ip_id = registry.commit_ip(owner, &hash, &0u32);
-        (registry_id, ip_id, secret, blinding)
+        let asset_id = client.register_asset(owner, &hash);
+        (contract_id, asset_id, secret, blinding)
     }
 
     /// Registers a token and mints `amount` to `recipient`.
@@ -133,19 +134,16 @@ mod oracle_tests {
     /// Returns (swap_client, admin_address).
     fn setup_swap_contract(
         env: &Env,
-        registry_id: &Address,
+        contract_id: &Address,
         token_id: &Address,
-        ip_id: u64,
+        asset_id: u64,
         seller: &Address,
         buyer: &Address,
     ) -> (AtomicSwapClient<'static>, Address) {
-        let contract_id = env.register(AtomicSwap, ());
-        let client = AtomicSwapClient::new(env, &contract_id);
-        let treasury = Address::generate(env);
-        client.initialize(registry_id, &treasury);
+        let client = AtomicSwapClient::new(env, contract_id);
         // Seed admin: first initiate_swap sets admin = seller
         client.initiate_swap(
-            token_id, &ip_id, seller, &500_i128, buyer, &0_u32, &None, &0_i128, &false,
+            token_id, &asset_id, seller, &500_i128, buyer, &0_u32, &None, &0_i128, &false,
         );
         // Cancel the seeding swap so the IP is free for oracle tests
         client.cancel_swap(&0_u64, seller);
@@ -180,11 +178,11 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         let pubkey = pubkey_bytes(&env, &test_signing_key());
 
         client.set_oracle(&admin_addr, &oracle_id, &pubkey, &true, &0_u32);
@@ -203,11 +201,11 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         let pubkey = pubkey_bytes(&env, &test_signing_key());
 
         client.set_oracle(&admin_addr, &oracle_id, &pubkey, &true, &500_u32);
@@ -223,11 +221,11 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         let pubkey = pubkey_bytes(&env, &test_signing_key());
 
         client.set_oracle(&admin_addr, &oracle_id, &pubkey, &true, &0_u32);
@@ -245,11 +243,11 @@ mod oracle_tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
         let attacker = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let (client, _) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         let pubkey = pubkey_bytes(&env, &test_signing_key());
 
         let result = client.try_set_oracle(&attacker, &oracle_id, &pubkey, &true, &0_u32);
@@ -265,11 +263,9 @@ mod oracle_tests {
     fn test_get_oracle_config_none_when_not_set() {
         let env = Env::default();
         env.mock_all_auths();
-        let registry_id = env.register(IpRegistry, ());
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        let treasury = Address::generate(&env);
-        client.initialize(&registry_id, &treasury);
+        client.initialize();
 
         assert!(client.get_oracle_config().is_none());
     }
@@ -283,12 +279,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         enable_oracle(
             &env,
             &client,
@@ -307,11 +303,9 @@ mod oracle_tests {
     fn test_get_oracle_price_fails_when_not_configured() {
         let env = Env::default();
         env.mock_all_auths();
-        let registry_id = env.register(IpRegistry, ());
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        let treasury = Address::generate(&env);
-        client.initialize(&registry_id, &treasury);
+        client.initialize();
         let token = Address::generate(&env);
 
         let result = client.try_get_oracle_price(&token);
@@ -328,11 +322,11 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         let pubkey = pubkey_bytes(&env, &test_signing_key());
 
         client.set_oracle(&admin_addr, &oracle_id, &pubkey, &false, &0_u32);
@@ -353,12 +347,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         let pubkey = pubkey_bytes(&env, &test_signing_key());
         client.set_oracle(&admin_addr, &oracle_id, &pubkey, &true, &0_u32);
 
@@ -380,12 +374,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         let pubkey = pubkey_bytes(&env, &test_signing_key());
         client.set_oracle(&admin_addr, &oracle_id, &pubkey, &true, &0_u32);
 
@@ -407,12 +401,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         let pubkey = pubkey_bytes(&env, &test_signing_key());
         client.set_oracle(&admin_addr, &oracle_id, &pubkey, &true, &0_u32);
 
@@ -436,12 +430,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         let pubkey = pubkey_bytes(&env, &test_signing_key());
         client.set_oracle(&admin_addr, &oracle_id, &pubkey, &true, &0_u32);
 
@@ -450,7 +444,7 @@ mod oracle_tests {
         oracle_client.set_signed_price(&500_000_i128, &ts, &forged_sig);
 
         let result = client.try_initiate_swap_with_oracle_price(
-            &token_id, &ip_id, &seller, &buyer, &0_u32, &None, &0_i128, &false, &0_i128, &0_i128,
+            &token_id, &asset_id, &seller, &buyer, &0_u32, &None, &0_i128, &false, &0_i128, &0_i128,
         );
         assert!(
             result.is_err(),
@@ -468,12 +462,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
 
         // 10% (1000 bps) max deviation.
         let pubkey = pubkey_bytes(&env, &test_signing_key());
@@ -502,12 +496,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
 
         let pubkey = pubkey_bytes(&env, &test_signing_key());
         client.set_oracle(&admin_addr, &oracle_id, &pubkey, &true, &1000_u32); // 10%
@@ -529,12 +523,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         let pubkey = pubkey_bytes(&env, &test_signing_key());
         client.set_oracle(&admin_addr, &oracle_id, &pubkey, &true, &0_u32); // unbounded
         publish_price(&env, &oracle_client, &token_id, 500_000_i128);
@@ -557,12 +551,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         enable_oracle(
             &env,
             &client,
@@ -574,7 +568,7 @@ mod oracle_tests {
         );
 
         let swap_id = client.initiate_swap_with_oracle_price(
-            &token_id, &ip_id, &seller, &buyer, &0_u32, &None, &0_i128, &false, &0_i128, &0_i128,
+            &token_id, &asset_id, &seller, &buyer, &0_u32, &None, &0_i128, &false, &0_i128, &0_i128,
         );
 
         let swap = client.get_swap(&swap_id).unwrap();
@@ -589,12 +583,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         enable_oracle(
             &env,
             &client,
@@ -606,7 +600,7 @@ mod oracle_tests {
         ); // below min
 
         let result = client.try_initiate_swap_with_oracle_price(
-            &token_id, &ip_id, &seller, &buyer, &0_u32, &None, &0_i128, &false, &500_i128, &0_i128,
+            &token_id, &asset_id, &seller, &buyer, &0_u32, &None, &0_i128, &false, &500_i128, &0_i128,
         );
         assert_eq!(
             result.unwrap_err().unwrap(),
@@ -621,12 +615,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         enable_oracle(
             &env,
             &client,
@@ -639,7 +633,7 @@ mod oracle_tests {
 
         let result = client.try_initiate_swap_with_oracle_price(
             &token_id,
-            &ip_id,
+            &asset_id,
             &seller,
             &buyer,
             &0_u32,
@@ -662,12 +656,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         enable_oracle(
             &env,
             &client,
@@ -680,7 +674,7 @@ mod oracle_tests {
 
         let swap_id = client.initiate_swap_with_oracle_price(
             &token_id,
-            &ip_id,
+            &asset_id,
             &seller,
             &buyer,
             &0_u32,
@@ -702,15 +696,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (contract_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
-        let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        let treasury = Address::generate(&env);
-        client.initialize(&registry_id, &treasury);
 
         let result = client.try_initiate_swap_with_oracle_price(
-            &token_id, &ip_id, &seller, &buyer, &0_u32, &None, &0_i128, &false, &0_i128, &0_i128,
+            &token_id, &asset_id, &seller, &buyer, &0_u32, &None, &0_i128, &false, &0_i128, &0_i128,
         );
         assert_eq!(
             result.unwrap_err().unwrap(),
@@ -725,12 +716,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         let pubkey = pubkey_bytes(&env, &test_signing_key());
         client.set_oracle(&admin_addr, &oracle_id, &pubkey, &true, &0_u32);
         publish_price(&env, &oracle_client, &token_id, 0_i128); // invalid: zero
@@ -751,12 +742,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         enable_oracle(
             &env,
             &client,
@@ -784,12 +775,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         enable_oracle(
             &env,
             &client,
@@ -823,12 +814,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         enable_oracle(
             &env,
             &client,
@@ -851,12 +842,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         enable_oracle(
             &env,
             &client,
@@ -891,12 +882,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
 
         // Enable, but never successfully fetch a price, then let the clock run
         // past the staleness window: there is no cache to fall back to.
@@ -919,12 +910,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         enable_oracle(
             &env,
             &client,
@@ -937,7 +928,7 @@ mod oracle_tests {
 
         // Initiate swap with oracle price
         let swap_id = client.initiate_swap_with_oracle_price(
-            &token_id, &ip_id, &seller, &buyer, &0_u32, &None, &0_i128, &false, &0_i128, &0_i128,
+            &token_id, &asset_id, &seller, &buyer, &0_u32, &None, &0_i128, &false, &0_i128, &0_i128,
         );
 
         let swap = client.get_swap(&swap_id).unwrap();
@@ -951,12 +942,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         enable_oracle(
             &env,
             &client,
@@ -970,7 +961,7 @@ mod oracle_tests {
         // Initiate swap with bounds that the cached price respects
         let swap_id = client.initiate_swap_with_oracle_price(
             &token_id,
-            &ip_id,
+            &asset_id,
             &seller,
             &buyer,
             &0_u32,
@@ -998,12 +989,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         enable_oracle(
             &env,
             &client,
@@ -1050,12 +1041,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         enable_oracle(
             &env,
             &client,
@@ -1097,12 +1088,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         enable_oracle(
             &env,
             &client,
@@ -1128,7 +1119,7 @@ mod oracle_tests {
         // so the IP is free.  Initiate a new swap now.
         let swap_id = client.initiate_swap_with_oracle_price(
             &token_id,
-            &ip_id,
+            &asset_id,
             &seller,
             &buyer,
             &0_u32,
@@ -1152,12 +1143,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         enable_oracle(
             &env,
             &client,
@@ -1183,7 +1174,7 @@ mod oracle_tests {
         // so the IP is free.  Initiate a new swap now.
         let swap_id = client.initiate_swap_with_oracle_price(
             &token_id,
-            &ip_id,
+            &asset_id,
             &seller,
             &buyer,
             &0_u32,
@@ -1207,12 +1198,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         enable_oracle(
             &env,
             &client,
@@ -1245,12 +1236,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         enable_oracle(
             &env,
             &client,
@@ -1278,12 +1269,12 @@ mod oracle_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
+        let (registry_id, asset_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
         let oracle_id = env.register(MockOracle, ());
         let oracle_client = MockOracleClient::new(&env, &oracle_id);
         let (client, admin_addr) =
-            setup_swap_contract(&env, &registry_id, &token_id, ip_id, &seller, &buyer);
+            setup_swap_contract(&env, &registry_id, &token_id, asset_id, &seller, &buyer);
         enable_oracle(
             &env,
             &client,
@@ -1308,7 +1299,7 @@ mod oracle_tests {
         // Initiate swap with tight bounds
         let swap_id = client.initiate_swap_with_oracle_price(
             &token_id,
-            &ip_id,
+            &asset_id,
             &seller,
             &buyer,
             &0_u32,

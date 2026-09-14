@@ -1,4 +1,4 @@
-/// #552 Load Testing Framework — Atomic Patent API
+/// #552 Load Testing Framework — SwapIT API
 ///
 /// Simulates concurrent load against the API server endpoints to measure
 /// throughput, latency percentiles, and error rates under stress.

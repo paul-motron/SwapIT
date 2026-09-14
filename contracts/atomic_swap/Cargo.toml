@@ -11,10 +11,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 soroban-sdk = { version = "26.0.1", features = ["alloc"] }
-ip_registry = { path = "../ip_registry" }
 
 [dev-dependencies]
 soroban-sdk = { version = "26.0.1", features = ["testutils"] }
-ip_registry = { path = "../ip_registry", features = ["testutils"] }
 proptest = { version = "1", default-features = false, features = ["std"] }
 ed25519-dalek = "2"

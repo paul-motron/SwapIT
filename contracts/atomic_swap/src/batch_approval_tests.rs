@@ -1,33 +1,25 @@
 #[cfg(test)]
 mod batch_approval_tests {
-    use ip_registry::{IpRegistry, IpRegistryClient};
     use soroban_sdk::{
         testutils::Address as _, token::StellarAssetClient, Address, Bytes, BytesN, Env, Vec,
     };
 
     use crate::{AtomicSwap, AtomicSwapClient, ContractError, Error, SwapStatus};
 
-    fn setup_registry(env: &Env, owner: &Address) -> Address {
-        let registry_id = env.register(IpRegistry, ());
-        let _ = IpRegistryClient::new(env, &registry_id);
-        registry_id
-    }
-
-    fn commit_ip(
+    fn register_asset(
         env: &Env,
-        registry_id: &Address,
+        client: &AtomicSwapClient,
         owner: &Address,
         seed: u8,
     ) -> (u64, BytesN<32>, BytesN<32>) {
-        let registry = IpRegistryClient::new(env, registry_id);
         let secret = BytesN::from_array(env, &[seed; 32]);
         let blinding = BytesN::from_array(env, &[seed.wrapping_add(0x80); 32]);
         let mut preimage = Bytes::new(env);
         preimage.append(&Bytes::from(secret.clone()));
         preimage.append(&Bytes::from(blinding.clone()));
         let hash: BytesN<32> = env.crypto().sha256(&preimage).into();
-        let ip_id = registry.commit_ip(owner, &hash, &0u32);
-        (ip_id, secret, blinding)
+        let asset_id = client.register_asset(owner, &hash);
+        (asset_id, secret, blinding)
     }
 
     fn setup_token(env: &Env, admin: &Address, recipient: &Address, amount: i128) -> Address {
@@ -38,9 +30,9 @@ mod batch_approval_tests {
         token_id
     }
 
-    fn setup_contract(env: &Env, registry_id: &Address) -> Address {
+    fn setup_contract(env: &Env) -> Address {
         let contract_id = env.register(AtomicSwap, ());
-        AtomicSwapClient::new(env, &contract_id).initialize(registry_id);
+        AtomicSwapClient::new(env, &contract_id).initialize();
         contract_id
     }
 
@@ -56,21 +48,20 @@ mod batch_approval_tests {
         let approver1 = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let registry_id = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
-        let contract_id = setup_contract(&env, &registry_id);
+        let contract_id = setup_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
 
-        let (ip1, _, _) = commit_ip(&env, &registry_id, &seller, 0x01);
+        let (ip1, _, _) = register_asset(&env, &client, &seller, 0x01);
 
-        let mut ip_ids = Vec::new(&env);
-        ip_ids.push_back(ip1);
+        let mut asset_ids = Vec::new(&env);
+        asset_ids.push_back(ip1);
 
         let mut prices = Vec::new(&env);
         prices.push_back(1000i128);
 
         let swap_ids =
-            client.batch_initiate_swap(&token_id, &ip_ids, &seller, &prices, &buyer, &1u32, &None);
+            client.batch_initiate_swap(&token_id, &asset_ids, &seller, &prices, &buyer, &1u32, &None);
 
         let swap_id = swap_ids.get(0).unwrap();
 
@@ -94,21 +85,20 @@ mod batch_approval_tests {
         let approver3 = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let registry_id = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
-        let contract_id = setup_contract(&env, &registry_id);
+        let contract_id = setup_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
 
-        let (ip1, _, _) = commit_ip(&env, &registry_id, &seller, 0x01);
+        let (ip1, _, _) = register_asset(&env, &client, &seller, 0x01);
 
-        let mut ip_ids = Vec::new(&env);
-        ip_ids.push_back(ip1);
+        let mut asset_ids = Vec::new(&env);
+        asset_ids.push_back(ip1);
 
         let mut prices = Vec::new(&env);
         prices.push_back(1000i128);
 
         let swap_ids =
-            client.batch_initiate_swap(&token_id, &ip_ids, &seller, &prices, &buyer, &3u32, &None);
+            client.batch_initiate_swap(&token_id, &asset_ids, &seller, &prices, &buyer, &3u32, &None);
 
         let swap_id = swap_ids.get(0).unwrap();
 
@@ -133,21 +123,20 @@ mod batch_approval_tests {
         let approver = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let registry_id = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
-        let contract_id = setup_contract(&env, &registry_id);
+        let contract_id = setup_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
 
-        let (ip1, _, _) = commit_ip(&env, &registry_id, &seller, 0x01);
+        let (ip1, _, _) = register_asset(&env, &client, &seller, 0x01);
 
-        let mut ip_ids = Vec::new(&env);
-        ip_ids.push_back(ip1);
+        let mut asset_ids = Vec::new(&env);
+        asset_ids.push_back(ip1);
 
         let mut prices = Vec::new(&env);
         prices.push_back(1000i128);
 
         let swap_ids =
-            client.batch_initiate_swap(&token_id, &ip_ids, &seller, &prices, &buyer, &2u32, &None);
+            client.batch_initiate_swap(&token_id, &asset_ids, &seller, &prices, &buyer, &2u32, &None);
 
         let swap_id = swap_ids.get(0).unwrap();
 
@@ -171,21 +160,20 @@ mod batch_approval_tests {
         let approver = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let registry_id = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
-        let contract_id = setup_contract(&env, &registry_id);
+        let contract_id = setup_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
 
-        let (ip1, _, _) = commit_ip(&env, &registry_id, &seller, 0x01);
+        let (ip1, _, _) = register_asset(&env, &client, &seller, 0x01);
 
-        let mut ip_ids = Vec::new(&env);
-        ip_ids.push_back(ip1);
+        let mut asset_ids = Vec::new(&env);
+        asset_ids.push_back(ip1);
 
         let mut prices = Vec::new(&env);
         prices.push_back(1000i128);
 
         let swap_ids =
-            client.batch_initiate_swap(&token_id, &ip_ids, &seller, &prices, &buyer, &1u32, &None);
+            client.batch_initiate_swap(&token_id, &asset_ids, &seller, &prices, &buyer, &1u32, &None);
 
         let swap_id = swap_ids.get(0).unwrap();
 
@@ -212,19 +200,18 @@ mod batch_approval_tests {
         let approver = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let registry_id = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
-        let contract_id = setup_contract(&env, &registry_id);
+        let contract_id = setup_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
 
-        let (ip1, _, _) = commit_ip(&env, &registry_id, &seller, 0x01);
-        let (ip2, _, _) = commit_ip(&env, &registry_id, &seller, 0x02);
-        let (ip3, _, _) = commit_ip(&env, &registry_id, &seller, 0x03);
+        let (ip1, _, _) = register_asset(&env, &client, &seller, 0x01);
+        let (ip2, _, _) = register_asset(&env, &client, &seller, 0x02);
+        let (ip3, _, _) = register_asset(&env, &client, &seller, 0x03);
 
-        let mut ip_ids = Vec::new(&env);
-        ip_ids.push_back(ip1);
-        ip_ids.push_back(ip2);
-        ip_ids.push_back(ip3);
+        let mut asset_ids = Vec::new(&env);
+        asset_ids.push_back(ip1);
+        asset_ids.push_back(ip2);
+        asset_ids.push_back(ip3);
 
         let mut prices = Vec::new(&env);
         prices.push_back(1000i128);
@@ -232,7 +219,7 @@ mod batch_approval_tests {
         prices.push_back(3000i128);
 
         let swap_ids =
-            client.batch_initiate_swap(&token_id, &ip_ids, &seller, &prices, &buyer, &1u32, &None);
+            client.batch_initiate_swap(&token_id, &asset_ids, &seller, &prices, &buyer, &1u32, &None);
 
         // Approve each swap
         for i in 0..swap_ids.len() {
@@ -259,21 +246,20 @@ mod batch_approval_tests {
         let approver = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let registry_id = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
-        let contract_id = setup_contract(&env, &registry_id);
+        let contract_id = setup_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
 
-        let (ip1, secret, blinding) = commit_ip(&env, &registry_id, &seller, 0x01);
+        let (ip1, secret, blinding) = register_asset(&env, &client, &seller, 0x01);
 
-        let mut ip_ids = Vec::new(&env);
-        ip_ids.push_back(ip1);
+        let mut asset_ids = Vec::new(&env);
+        asset_ids.push_back(ip1);
 
         let mut prices = Vec::new(&env);
         prices.push_back(1000i128);
 
         let swap_ids =
-            client.batch_initiate_swap(&token_id, &ip_ids, &seller, &prices, &buyer, &1u32, &None);
+            client.batch_initiate_swap(&token_id, &asset_ids, &seller, &prices, &buyer, &1u32, &None);
 
         let swap_id = swap_ids.get(0).unwrap();
 
@@ -306,21 +292,20 @@ mod batch_approval_tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let registry_id = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000_000);
-        let contract_id = setup_contract(&env, &registry_id);
+        let contract_id = setup_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
 
-        let (ip1, _, _) = commit_ip(&env, &registry_id, &seller, 0x01);
+        let (ip1, _, _) = register_asset(&env, &client, &seller, 0x01);
 
-        let mut ip_ids = Vec::new(&env);
-        ip_ids.push_back(ip1);
+        let mut asset_ids = Vec::new(&env);
+        asset_ids.push_back(ip1);
 
         let mut prices = Vec::new(&env);
         prices.push_back(1000i128);
 
         let swap_ids =
-            client.batch_initiate_swap(&token_id, &ip_ids, &seller, &prices, &buyer, &1u32, &None);
+            client.batch_initiate_swap(&token_id, &asset_ids, &seller, &prices, &buyer, &1u32, &None);
 
         let swap_id = swap_ids.get(0).unwrap();
 

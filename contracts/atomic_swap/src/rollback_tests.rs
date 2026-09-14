@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod rollback_tests {
-    use ip_registry::{IpRegistry, IpRegistryClient};
     use soroban_sdk::{
         testutils::{Address as _, Ledger},
         token::StellarAssetClient,
@@ -11,10 +10,11 @@ mod rollback_tests {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    fn setup_registry(env: &Env, owner: &Address) -> (Address, u64, BytesN<32>, BytesN<32>) {
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(env, &registry_id);
-
+    fn register_test_asset(
+        env: &Env,
+        client: &AtomicSwapClient,
+        owner: &Address,
+    ) -> (u64, BytesN<32>, BytesN<32>) {
         let secret = BytesN::from_array(env, &[0xAAu8; 32]);
         let blinding = BytesN::from_array(env, &[0xBBu8; 32]);
 
@@ -23,8 +23,8 @@ mod rollback_tests {
         preimage.append(&Bytes::from(blinding.clone()));
         let commitment_hash: BytesN<32> = env.crypto().sha256(&preimage).into();
 
-        let ip_id = registry.commit_ip(owner, &commitment_hash);
-        (registry_id, ip_id, secret, blinding)
+        let asset_id = client.register_asset(owner, &commitment_hash);
+        (asset_id, secret, blinding)
     }
 
     fn setup_token(env: &Env, admin: &Address, recipient: &Address, amount: i128) -> Address {
@@ -39,15 +39,16 @@ mod rollback_tests {
     fn setup_completed_swap(env: &Env) -> (AtomicSwapClient, u64, Address, Address, Address) {
         let seller = Address::generate(env);
         let buyer = Address::generate(env);
-        let (registry_id, ip_id, secret, blinding) = setup_registry(env, &seller);
-        let token_id = setup_token(env, &seller, &buyer, 1_000_000);
 
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(env, &contract_id);
-        client.initialize(&registry_id);
+        client.initialize();
+
+        let (asset_id, secret, blinding) = register_test_asset(env, &client, &seller);
+        let token_id = setup_token(env, &seller, &buyer, 1_000_000);
 
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &1000i128, &buyer,
+            &token_id, &asset_id, &seller, &1000i128, &buyer,
             &0u32, &None, &0i128, &false,
         );
         client.accept_swap(&swap_id);
@@ -127,16 +128,17 @@ mod rollback_tests {
 
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
-        let (registry_id, ip_id, secret, blinding) = setup_registry(&env, &seller);
-        let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
 
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        client.initialize();
+
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller);
+        let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
 
         // Use price=1000 so 90%=900 buyer, 10%=100 treasury
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &1000i128, &buyer,
+            &token_id, &asset_id, &seller, &1000i128, &buyer,
             &0u32, &None, &0i128, &false,
         );
         client.accept_swap(&swap_id);
@@ -168,15 +170,16 @@ mod rollback_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let outsider = Address::generate(&env);
-        let (registry_id, ip_id, secret, blinding) = setup_registry(&env, &seller);
-        let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
 
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        client.initialize();
+
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller);
+        let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
 
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &1000i128, &buyer,
+            &token_id, &asset_id, &seller, &1000i128, &buyer,
             &0u32, &None, &0i128, &false,
         );
         client.accept_swap(&swap_id);
@@ -211,15 +214,16 @@ mod rollback_tests {
 
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
-        let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
 
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        client.initialize();
+
+        let (asset_id, _, _) = register_test_asset(&env, &client, &seller);
+        let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
 
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &1000i128, &buyer,
+            &token_id, &asset_id, &seller, &1000i128, &buyer,
             &0u32, &None, &0i128, &false,
         );
         client.accept_swap(&swap_id);
@@ -232,31 +236,32 @@ mod rollback_tests {
     // ── Multi-currency rollback tests (#836) ──────────────────────────────────
 
     /// Helper: set up and complete a swap using a specific (non-XLM) settlement token.
-    /// Returns (client, swap_id, seller, buyer, token_id, registry_id).
+    /// Returns (client, swap_id, seller, buyer, token_id, secret, blinding).
     fn setup_multi_currency_swap(
         env: &Env,
         price: i128,
         buyer_balance: i128,
-    ) -> (AtomicSwapClient, u64, Address, Address, Address, Address, BytesN<32>, BytesN<32>) {
+    ) -> (AtomicSwapClient, u64, Address, Address, Address, BytesN<32>, BytesN<32>) {
         let seller = Address::generate(env);
         let buyer = Address::generate(env);
-        let (registry_id, ip_id, secret, blinding) = setup_registry(env, &seller);
+
+        let contract_id = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(env, &contract_id);
+        client.initialize();
+
+        let (asset_id, secret, blinding) = register_test_asset(env, &client, &seller);
 
         // Mint a USDC-like token (admin = seller for simplicity)
         let token_id = setup_token(env, &seller, &buyer, buyer_balance);
 
-        let contract_id = env.register(AtomicSwap, ());
-        let client = AtomicSwapClient::new(env, &contract_id);
-        client.initialize(&registry_id);
-
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &price, &buyer,
+            &token_id, &asset_id, &seller, &price, &buyer,
             &0u32, &None, &0i128, &false,
         );
         client.accept_swap(&swap_id);
         client.reveal_key(&swap_id, &seller, &secret, &blinding);
 
-        (client, swap_id, seller, buyer, token_id, registry_id, secret, blinding)
+        (client, swap_id, seller, buyer, token_id, secret, blinding)
     }
 
     /// A swap settled in a non-native token can still be rolled back within 24h;
@@ -268,7 +273,7 @@ mod rollback_tests {
         env.ledger().with_mut(|l| l.timestamp = 1_000_000);
 
         let price = 2_000_000i128; // 2 USDC (6 dp)
-        let (client, swap_id, _seller, buyer, token_id, _registry_id, _secret, _blinding) =
+        let (client, swap_id, _seller, buyer, token_id, _secret, _blinding) =
             setup_multi_currency_swap(&env, price, 10_000_000);
 
         let token = soroban_sdk::token::Client::new(&env, &token_id);
@@ -349,44 +354,43 @@ mod rollback_tests {
         assert_eq!(swap_b_after.status, SwapStatus::RolledBack);
     }
 
-    // ── Cross-contract rollback tests (#836) ──────────────────────────────────
+    // ── Local asset-registry consistency across rollback (#836) ───────────────
 
-    /// A swap that fails mid-flight after the ip_registry cross-contract call has
-    /// already recorded the IP commitment must leave the registry record intact
-    /// (the registry is append-only) while the swap itself rolls back cleanly.
+    /// A swap that fails mid-flight after the asset commitment has already been
+    /// registered must leave that commitment record intact (registration is
+    /// append-only) while the swap itself rolls back cleanly.
     ///
     /// Scenario:
-    ///   1. Seller commits IP to registry   → registry has the record
+    ///   1. Seller registers an asset commitment → record exists
     ///   2. Swap is initiated, accepted, key revealed → swap Completed
     ///   3. validate_and_rollback_swap(false) → swap goes RolledBack
-    ///   4. Registry record must still exist and be owned by original owner
-    ///      (cross-contract state must not be corrupted by the swap rollback)
+    ///   4. Asset record must still exist and be owned by the original owner
     #[test]
-    fn test_rollback_after_ip_registry_cross_contract_call_leaves_registry_intact() {
+    fn test_rollback_after_registered_asset_leaves_record_intact() {
         let env = Env::default();
         env.mock_all_auths();
         env.ledger().with_mut(|l| l.timestamp = 1_000_000);
 
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
-        let (registry_id, ip_id, secret, blinding) = setup_registry(&env, &seller);
-        let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
 
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        client.initialize();
 
-        // Verify registry record exists before swap
-        let registry = IpRegistryClient::new(&env, &registry_id);
-        let record_before = registry.get_ip(&ip_id);
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller);
+        let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
+
+        // Verify the asset record exists before the swap
+        let record_before = client.get_asset(&asset_id);
         assert_eq!(record_before.owner, seller,
-            "IP must be owned by seller before the swap");
+            "asset must be owned by seller before the swap");
         assert!(!record_before.revoked,
-            "IP must not be revoked before the swap");
+            "asset must not be revoked before the swap");
 
         // Complete the swap
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &1000i128, &buyer,
+            &token_id, &asset_id, &seller, &1000i128, &buyer,
             &0u32, &None, &0i128, &false,
         );
         client.accept_swap(&swap_id);
@@ -396,34 +400,35 @@ mod rollback_tests {
         let rolled_back = client.validate_and_rollback_swap(&swap_id, &false);
         assert!(rolled_back, "swap rollback must succeed");
 
-        // Registry record must still be intact — cross-contract state must not
-        // have been corrupted by the swap rollback.
-        let record_after = registry.get_ip(&ip_id);
+        // Asset record must still be intact — the swap rollback must not
+        // corrupt unrelated contract state.
+        let record_after = client.get_asset(&asset_id);
         assert_eq!(record_after.owner, record_before.owner,
-            "IP ownership in registry must be unchanged after swap rollback");
+            "asset ownership must be unchanged after swap rollback");
         assert!(!record_after.revoked,
-            "IP must remain non-revoked after swap rollback");
+            "asset must remain non-revoked after swap rollback");
     }
 
     /// A swap that is rolled back must not leave any escrowed funds in the
     /// contract — no funds should be stuck after the rollback.
     #[test]
-    fn test_rollback_cross_contract_no_funds_stuck_after_rollback() {
+    fn test_rollback_no_funds_stuck_after_rollback() {
         let env = Env::default();
         env.mock_all_auths();
         env.ledger().with_mut(|l| l.timestamp = 1_000_000);
 
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
-        let (registry_id, ip_id, secret, blinding) = setup_registry(&env, &seller);
-        let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
 
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        client.initialize();
+
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller);
+        let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
 
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &1000i128, &buyer,
+            &token_id, &asset_id, &seller, &1000i128, &buyer,
             &0u32, &None, &0i128, &false,
         );
         client.accept_swap(&swap_id);
@@ -446,32 +451,31 @@ mod rollback_tests {
         );
     }
 
-    /// An IP record in the registry must not be left in an inconsistent state
-    /// (e.g., marked revoked or ownership-corrupted) if the atomic swap is
-    /// rolled back after the cross-contract `ensure_seller_owns_active_ip`
-    /// guard has already been exercised during `initiate_swap`.
+    /// An asset record must not be left in an inconsistent state (e.g. marked
+    /// revoked or ownership-corrupted) if the atomic swap is rolled back after
+    /// the `ensure_seller_owns_active_asset` guard has already been exercised
+    /// during `initiate_swap`.
     #[test]
-    fn test_rollback_cross_contract_ip_record_consistent_after_rollback() {
+    fn test_rollback_asset_record_consistent_after_rollback() {
         let env = Env::default();
         env.mock_all_auths();
         env.ledger().with_mut(|l| l.timestamp = 1_000_000);
 
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
-        let (registry_id, ip_id, secret, blinding) = setup_registry(&env, &seller);
-        let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
 
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        client.initialize();
 
-        let registry = IpRegistryClient::new(&env, &registry_id);
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller);
+        let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
 
-        // Snapshot registry state before swap
-        let before = registry.get_ip(&ip_id);
+        // Snapshot the asset record before the swap
+        let before = client.get_asset(&asset_id);
 
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &1000i128, &buyer,
+            &token_id, &asset_id, &seller, &1000i128, &buyer,
             &0u32, &None, &0i128, &false,
         );
         client.accept_swap(&swap_id);
@@ -479,20 +483,20 @@ mod rollback_tests {
 
         client.validate_and_rollback_swap(&swap_id, &false);
 
-        // Registry state after rollback must match the pre-swap snapshot
-        let after = registry.get_ip(&ip_id);
+        // Asset state after rollback must match the pre-swap snapshot
+        let after = client.get_asset(&asset_id);
         assert_eq!(after.owner, before.owner,
-            "owner must be unchanged after cross-contract rollback");
+            "owner must be unchanged after rollback");
         assert_eq!(after.revoked, before.revoked,
-            "revoked flag must be unchanged after cross-contract rollback");
+            "revoked flag must be unchanged after rollback");
         assert_eq!(after.commitment_hash, before.commitment_hash,
-            "commitment hash must be unchanged after cross-contract rollback");
+            "commitment hash must be unchanged after rollback");
     }
 
-    /// After a cross-contract swap rollback, the seller must be able to
-    /// immediately initiate a new swap for the same IP — no stale lock remains.
+    /// After a swap rollback, the seller must be able to immediately initiate a
+    /// new swap for the same asset — no stale lock remains.
     #[test]
-    fn test_rollback_cross_contract_ip_can_be_reused_after_rollback() {
+    fn test_rollback_asset_can_be_reused_after_rollback() {
         let env = Env::default();
         env.mock_all_auths();
         env.ledger().with_mut(|l| l.timestamp = 1_000_000);
@@ -500,28 +504,29 @@ mod rollback_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let buyer2 = Address::generate(&env);
-        let (registry_id, ip_id, secret, blinding) = setup_registry(&env, &seller);
+
+        let contract_id = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(&env, &contract_id);
+        client.initialize();
+
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller);
         let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
 
         // Mint tokens for second buyer
         StellarAssetClient::new(&env, &token_id).mint(&buyer2, &1_000_000);
 
-        let contract_id = env.register(AtomicSwap, ());
-        let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
-
         // First swap
         let swap_id_1 = client.initiate_swap(
-            &token_id, &ip_id, &seller, &1000i128, &buyer,
+            &token_id, &asset_id, &seller, &1000i128, &buyer,
             &0u32, &None, &0i128, &false,
         );
         client.accept_swap(&swap_id_1);
         client.reveal_key(&swap_id_1, &seller, &secret, &blinding);
         client.validate_and_rollback_swap(&swap_id_1, &false);
 
-        // Seller must be able to start a fresh swap for the same IP immediately
+        // Seller must be able to start a fresh swap for the same asset immediately
         let swap_id_2 = client.initiate_swap(
-            &token_id, &ip_id, &seller, &1000i128, &buyer2,
+            &token_id, &asset_id, &seller, &1000i128, &buyer2,
             &0u32, &None, &0i128, &false,
         );
         assert_ne!(swap_id_1, swap_id_2,
@@ -529,6 +534,6 @@ mod rollback_tests {
 
         let swap2 = client.get_swap(&swap_id_2).unwrap();
         assert_eq!(swap2.status, SwapStatus::Pending,
-            "second swap must start in Pending state after IP is reused post-rollback");
+            "second swap must start in Pending state after asset is reused post-rollback");
     }
 }

@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod arbitration_tests {
-    use ip_registry::{IpRegistry, IpRegistryClient};
     use soroban_sdk::{
         testutils::{Address as _, Ledger},
         token::StellarAssetClient,
@@ -11,17 +10,15 @@ mod arbitration_tests {
 
     const RULING_DELAY: u64 = 48 * 3600;
 
-    fn setup_registry(env: &Env, owner: &Address) -> (Address, u64, BytesN<32>, BytesN<32>) {
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(env, &registry_id);
+    fn register_test_asset(env: &Env, client: &AtomicSwapClient, owner: &Address) -> (u64, BytesN<32>, BytesN<32>) {
         let secret = BytesN::from_array(env, &[2u8; 32]);
         let blinding = BytesN::from_array(env, &[3u8; 32]);
         let mut preimage = soroban_sdk::Bytes::new(env);
         preimage.append(&soroban_sdk::Bytes::from(secret.clone()));
         preimage.append(&soroban_sdk::Bytes::from(blinding.clone()));
         let commitment_hash: BytesN<32> = env.crypto().sha256(&preimage).into();
-        let ip_id = registry.commit_ip(owner, &commitment_hash, &0u32);
-        (registry_id, ip_id, secret, blinding)
+        let asset_id = client.register_asset(owner, &commitment_hash);
+        (asset_id, secret, blinding)
     }
 
     fn setup_token(env: &Env, admin: &Address, recipient: &Address, amount: i128) -> Address {
@@ -39,13 +36,14 @@ mod arbitration_tests {
         let seller = Address::generate(env);
         let buyer = Address::generate(env);
         let token_admin = Address::generate(env);
-        let (registry_id, ip_id, _, _) = setup_registry(env, &seller);
         let token_id = setup_token(env, &token_admin, &buyer, 20_000_000);
         StellarAssetClient::new(env, &token_id).mint(&seller, &20_000_000);
 
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(env, &contract_id);
-        client.initialize(&registry_id);
+        client.initialize();
+
+        let (asset_id, _, _) = register_test_asset(env, &client, &seller);
 
         // Price is kept small (well under 40) so protocol_fee_bps's fee
         // floors to 0 and the "complete to seller" ruling path never has to
@@ -54,7 +52,7 @@ mod arbitration_tests {
         // test's token, a separate storage bug (see docs/threat-model.md's
         // #781 update) this PR does not fix.
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &20_i128, &buyer, &0_u32, &None, &0_i128, &false,
+            &token_id, &asset_id, &seller, &20_i128, &buyer, &0_u32, &None, &0_i128, &false,
         );
         client.accept_swap(&swap_id);
         client.raise_dispute(&swap_id);
@@ -126,15 +124,15 @@ mod arbitration_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin_token = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin_token, &buyer, 1000);
 
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        let (asset_id, _, _) = register_test_asset(&env, &client, &seller);
+        client.initialize();
 
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
+            &token_id, &asset_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
         );
         // Swap is Pending, not Disputed — should panic
         let signers = committee(&env);
@@ -530,17 +528,17 @@ mod arbitration_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000);
 
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        let (asset_id, _, _) = register_test_asset(&env, &client, &seller);
+        client.initialize();
 
         // Initiate with price=1000, default quantity=1 — set quantity via initiate_swap
         // then manually bump quantity to 10 by accepting partial
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &1000_i128, &buyer, &0_u32, &None, &0_i128, &false,
+            &token_id, &asset_id, &seller, &1000_i128, &buyer, &0_u32, &None, &0_i128, &false,
         );
 
         // Patch quantity to 10 so partial acceptance makes sense
@@ -570,15 +568,15 @@ mod arbitration_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000);
 
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        let (asset_id, _, _) = register_test_asset(&env, &client, &seller);
+        client.initialize();
 
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
+            &token_id, &asset_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
         );
 
         // quantity=1 (default), accepting 1/1 = full price
@@ -598,15 +596,15 @@ mod arbitration_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000);
 
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        let (asset_id, _, _) = register_test_asset(&env, &client, &seller);
+        client.initialize();
 
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
+            &token_id, &asset_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
         );
         client.accept_swap_partial(&swap_id, &0_u32);
     }
@@ -620,15 +618,15 @@ mod arbitration_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 10_000);
 
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        let (asset_id, _, _) = register_test_asset(&env, &client, &seller);
+        client.initialize();
 
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
+            &token_id, &asset_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
         );
         // quantity=1 by default, requesting 2 should panic
         client.accept_swap_partial(&swap_id, &2_u32);
@@ -653,27 +651,25 @@ mod arbitration_tests {
         let arbitrator = Address::generate(&env);
         let token_admin = Address::generate(&env);
 
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(&env, &registry_id);
-        let hash1 = BytesN::from_array(&env, &[0x01u8; 32]);
-        let hash2 = BytesN::from_array(&env, &[0x02u8; 32]);
-        let ip1 = registry.commit_ip(&seller, &hash1, &0u32);
-        let ip2 = registry.commit_ip(&seller, &hash2, &0u32);
-
         let token_id = setup_token(&env, &token_admin, &buyer, 10_000_000);
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        client.initialize();
 
-        let mut ip_ids = Vec::new(&env);
-        ip_ids.push_back(ip1);
-        ip_ids.push_back(ip2);
+        let hash1 = BytesN::from_array(&env, &[0x01u8; 32]);
+        let hash2 = BytesN::from_array(&env, &[0x02u8; 32]);
+        let ip1 = client.register_asset(&seller, &hash1);
+        let ip2 = client.register_asset(&seller, &hash2);
+
+        let mut asset_ids = Vec::new(&env);
+        asset_ids.push_back(ip1);
+        asset_ids.push_back(ip2);
         let mut prices = Vec::new(&env);
         prices.push_back(20i128);
         prices.push_back(30i128);
 
         let swap_ids =
-            client.batch_initiate_swap(&token_id, &ip_ids, &seller, &prices, &buyer, &0u32, &None);
+            client.batch_initiate_swap(&token_id, &asset_ids, &seller, &prices, &buyer, &0u32, &None);
         client.batch_accept_swaps(&swap_ids, &buyer);
         client.raise_dispute(&swap_ids.get(0).unwrap());
         client.raise_dispute(&swap_ids.get(1).unwrap());

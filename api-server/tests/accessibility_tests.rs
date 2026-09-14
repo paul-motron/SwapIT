@@ -1,4 +1,4 @@
-/// Accessibility tests for Atomic Patent API (#564)
+/// Accessibility tests for SwapIT API (#564)
 ///
 /// Verifies that the API is accessible to different types of clients:
 /// varying Accept headers, API versions, auth states, and payload shapes.

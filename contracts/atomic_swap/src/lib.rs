@@ -1,6 +1,8 @@
 #![no_std]
 #![allow(deprecated)]
-mod registry;
+#[cfg(test)]
+extern crate std;
+pub mod registry;
 mod swap;
 mod upgrade;
 mod multi_currency;
@@ -8,8 +10,6 @@ mod price_oracle;
 mod types;
 mod utils;
 pub mod cross_contract;
-#[cfg(test)]
-mod cross_contract_tests;
 #[cfg(test)]
 mod oracle_tests;
 
@@ -37,7 +37,7 @@ pub enum ContractError {
     SwapNotFound = 1,
     InvalidKey = 2,
     PriceTooSmall = 3,
-    NotIPOwner = 4,
+    NotAssetOwner = 4,
     SwapExists = 5,
     NotPending = 6,
     OnlySellerReveal = 7,
@@ -47,7 +47,7 @@ pub enum ContractError {
     NotInAccepted = 11,
     OnlyBuyerCancel = 12,
     NotExpired = 13,
-    IpRevoked = 14,
+    AssetRevoked = 14,
     UnauthorizedUpg = 15,
     InvalidFeeBps = 16,
     DisputeExpired = 17,
@@ -110,6 +110,11 @@ pub enum ContractError {
     /// under-collateralized; nothing is paid rather than paying a silent
     /// partial amount.
     InsufficientInsuranceReserve = 67,
+    /// The referenced asset_id was never registered via `register_asset`.
+    AssetNotFound = 68,
+    /// `register_asset` was called with a commitment hash that's already
+    /// registered to another asset_id.
+    DuplicateCommitment = 69,
 }
 
 // ── TTL ───────────────────────────────────────────────────────────────────────
@@ -143,9 +148,15 @@ pub const MIN_COMMITTEE_THRESHOLD: u32 = 2;
 pub enum DataKey {
     Swap(u64),
     NextId,
-    /// The IpRegistry contract address set once at initialization.
-    IpRegistry,
-    /// Maps ip_id → swap_id for any swap currently in Pending or Accepted state.
+    /// Guards `initialize` against being called more than once.
+    Initialized,
+    /// Maps asset_id → AssetCommitment (owner, hiding commitment, revoked flag).
+    AssetCommitment(u64),
+    /// Next asset_id counter for `register_asset`.
+    NextAssetId,
+    /// Marks a commitment hash as already registered, to reject reuse.
+    CommitmentUsed(BytesN<32>),
+    /// Maps asset_id → swap_id for any swap currently in Pending or Accepted state.
     /// Cleared when a swap reaches Completed or Cancelled.
     ActiveSwap(u64),
     /// Maps seller address → Vec<u64> of all swap IDs they have initiated.
@@ -155,7 +166,7 @@ pub enum DataKey {
     Admin,
     ProtocolConfig,
     Paused,
-    IpSwaps(u64),
+    AssetSwaps(u64),
     /// #253: Maps swap_id → Vec<SwapHistoryEntry> audit trail.
     SwapHistory(u64),
     /// #254: Maps swap_id → Vec<Address> of collected approvals.
@@ -172,7 +183,7 @@ pub enum DataKey {
     SwapReferrer(u64),
     /// #347: Maps auction_id → AuctionRecord for IP auctions.
     Auction(u64),
-    /// #347: Maps ip_id → auction_id for active auction.
+    /// #347: Maps asset_id → auction_id for active auction.
     ActiveAuction(u64),
     /// #347: Maps auction_id → Vec<(bidder, amount)> for bid history.
     AuctionBids(u64),
@@ -209,7 +220,7 @@ pub enum DataKey {
     EscrowDeposit(u64),
     /// Maps address → reputation score (0–100).
     UserReputation(Address),
-    /// Maps ip_id → minimum buyer reputation required (set by seller per swap).
+    /// Maps asset_id → minimum buyer reputation required (set by seller per swap).
     ReputationMultiplier(u64),
     /// Maps swap_id → timestamp when arbitration was requested.
     ArbitrationTimestamp(u64),
@@ -277,7 +288,7 @@ pub enum SwapMode {
 #[contracttype]
 #[derive(Clone)]
 pub struct SwapRecord {
-    pub ip_id: u64,
+    pub asset_id: u64,
     pub seller: Address,
     pub buyer: Address,
     pub price: i128,
@@ -323,22 +334,41 @@ pub struct AtomicSwap;
 
 #[contractimpl]
 impl AtomicSwap {
-    /// One-time initialization: store the IpRegistry contract address.
-    /// Panics if called more than once.
-    pub fn initialize(env: Env, ip_registry: Address) {
-        if env.storage().instance().has(&DataKey::IpRegistry) {
+    /// One-time initialization. Panics if called more than once.
+    pub fn initialize(env: Env) {
+        if env.storage().instance().has(&DataKey::Initialized) {
             env.panic_with_error(Error::from_contract_error(
                 ContractError::AlreadyInit as u32,
             ));
         }
-        env.storage()
-            .instance()
-            .set(&DataKey::IpRegistry, &ip_registry);
+        env.storage().instance().set(&DataKey::Initialized, &true);
 
         // Seed the on-chain interface manifest so future upgrades can validate
         // backward compatibility against the v1 schema.
         // let schema = upgrade::build_v1_schema(&env);
         // upgrade::store_schema(&env, &schema);
+    }
+
+    // ── Asset Commitments ─────────────────────────────────────────────────────
+
+    /// Registers a new swappable asset for `owner`, committing to a
+    /// `secret`/`blinding_factor` pair via `commitment_hash =
+    /// sha256(secret || blinding_factor)` without revealing either. Returns
+    /// the new `asset_id`, which `initiate_swap` references and `reveal_key`
+    /// later checks the opening against.
+    pub fn register_asset(env: Env, owner: Address, commitment_hash: BytesN<32>) -> u64 {
+        registry::register_asset(&env, &owner, commitment_hash)
+    }
+
+    /// Revokes a previously registered asset. Only its owner may revoke it;
+    /// once revoked, `initiate_swap` refuses new swaps against it.
+    pub fn revoke_asset(env: Env, owner: Address, asset_id: u64) {
+        registry::revoke_asset(&env, &owner, asset_id)
+    }
+
+    /// Returns the registered commitment record for `asset_id`.
+    pub fn get_asset(env: Env, asset_id: u64) -> registry::AssetCommitment {
+        registry::get_asset(&env, asset_id)
     }
 
     // ── #470: Price Oracle ────────────────────────────────────────────────────
@@ -431,7 +461,7 @@ impl AtomicSwap {
     pub fn initiate_swap_with_oracle_price(
         env: Env,
         token: Address,
-        ip_id: u64,
+        asset_id: u64,
         seller: Address,
         buyer: Address,
         required_approvals: u32,
@@ -447,7 +477,7 @@ impl AtomicSwap {
         let swap_id = Self::initiate_swap(
             env.clone(),
             token,
-            ip_id,
+            asset_id,
             seller,
             oracle_price,
             buyer,
@@ -472,7 +502,7 @@ impl AtomicSwap {
     pub fn initiate_swap(
         env: Env,
         token: Address,
-        ip_id: u64,
+        asset_id: u64,
         seller: Address,
         price: i128,
         buyer: Address,
@@ -498,14 +528,14 @@ impl AtomicSwap {
         require_positive_price(&env, price);
 
         // Verify seller owns the IP and it's not revoked
-        registry::ensure_seller_owns_active_ip(&env, ip_id, &seller);
+        registry::ensure_seller_owns_active_asset(&env, asset_id, &seller);
 
-        require_no_active_swap(&env, ip_id);
+        require_no_active_swap(&env, asset_id);
 
         let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(0);
 
         let swap = SwapRecord {
-            ip_id,
+            asset_id,
             seller: seller.clone(),
             buyer: buyer.clone(),
             price,
@@ -550,9 +580,9 @@ impl AtomicSwap {
             .extend_ttl(&DataKey::Swap(id), LEDGER_BUMP, LEDGER_BUMP);
         env.storage()
             .persistent()
-            .set(&DataKey::ActiveSwap(ip_id), &id);
+            .set(&DataKey::ActiveSwap(asset_id), &id);
         env.storage().persistent().extend_ttl(
-            &DataKey::ActiveSwap(ip_id),
+            &DataKey::ActiveSwap(asset_id),
             LEDGER_BUMP,
             LEDGER_BUMP,
         );
@@ -560,18 +590,18 @@ impl AtomicSwap {
         swap::append_swap_for_party(&env, &seller, &buyer, id);
 
         // Append to ip-swaps index
-        let mut ip_ids: Vec<u64> = env
+        let mut asset_ids: Vec<u64> = env
             .storage()
             .persistent()
-            .get(&DataKey::IpSwaps(ip_id))
+            .get(&DataKey::AssetSwaps(asset_id))
             .unwrap_or(Vec::new(&env));
-        ip_ids.push_back(id);
+        asset_ids.push_back(id);
         env.storage()
             .persistent()
-            .set(&DataKey::IpSwaps(ip_id), &ip_ids);
+            .set(&DataKey::AssetSwaps(asset_id), &asset_ids);
         env.storage()
             .persistent()
-            .extend_ttl(&DataKey::IpSwaps(ip_id), 50000, 50000);
+            .extend_ttl(&DataKey::AssetSwaps(asset_id), 50000, 50000);
 
         // #253: Log initial history entry
         Self::append_history(&env, id, SwapStatus::Pending);
@@ -582,7 +612,7 @@ impl AtomicSwap {
             (soroban_sdk::symbol_short!("swap_init"),),
             SwapInitiatedEvent {
                 swap_id: id,
-                ip_id,
+                asset_id,
                 seller,
                 buyer,
                 price,
@@ -819,7 +849,7 @@ impl AtomicSwap {
             ContractError::NotAccepted,
         );
 
-        // Verify commitment via IP registry
+        // Verify commitment
         // Guard: if this swap has required signers, all must have signed before reveal.
         if env
             .storage()
@@ -843,7 +873,7 @@ impl AtomicSwap {
             }
         }
 
-        let valid = registry::verify_commitment(&env, swap.ip_id, &secret, &blinding_factor);
+        let valid = registry::verify_commitment(&env, swap.asset_id, &secret, &blinding_factor);
         if !valid {
             // #354: If insurance is enabled, mark swap as claimable before panicking.
             if swap.insurance_enabled {
@@ -884,7 +914,7 @@ impl AtomicSwap {
         // Release the IP lock
         env.storage()
             .persistent()
-            .remove(&DataKey::ActiveSwap(swap.ip_id));
+            .remove(&DataKey::ActiveSwap(swap.asset_id));
 
         // #253: Log history entry
         Self::append_history(&env, swap_id, SwapStatus::Completed);
@@ -1036,7 +1066,7 @@ impl AtomicSwap {
             swap::save_swap(&env, swap_id, &swap);
             env.storage()
                 .persistent()
-                .remove(&DataKey::ActiveSwap(swap.ip_id));
+                .remove(&DataKey::ActiveSwap(swap.asset_id));
             token_client.transfer(&env.current_contract_address(), &swap.buyer, &swap.price);
             env.storage().persistent().set(
                 &DataKey::CancelReason(swap_id),
@@ -1047,7 +1077,7 @@ impl AtomicSwap {
             swap::save_swap(&env, swap_id, &swap);
             env.storage()
                 .persistent()
-                .remove(&DataKey::ActiveSwap(swap.ip_id));
+                .remove(&DataKey::ActiveSwap(swap.asset_id));
             let config = Self::protocol_config(&env);
             let fee_amount = if config.protocol_fee_bps > 0 {
                 (swap.price * config.protocol_fee_bps as i128) / 10000
@@ -1148,7 +1178,7 @@ impl AtomicSwap {
         // Release the IP lock
         env.storage()
             .persistent()
-            .remove(&DataKey::ActiveSwap(swap.ip_id));
+            .remove(&DataKey::ActiveSwap(swap.asset_id));
 
         // Store rollback reason
         env.storage()
@@ -1239,7 +1269,7 @@ impl AtomicSwap {
             swap::save_swap(&env, swap_id, &swap);
             env.storage()
                 .persistent()
-                .remove(&DataKey::ActiveSwap(swap.ip_id));
+                .remove(&DataKey::ActiveSwap(swap.asset_id));
             env.storage()
                 .persistent()
                 .set(&DataKey::CancelReason(swap_id), &reason);
@@ -1286,7 +1316,7 @@ impl AtomicSwap {
         swap::save_swap(&env, swap_id, &swap);
         env.storage()
             .persistent()
-            .remove(&DataKey::ActiveSwap(swap.ip_id));
+            .remove(&DataKey::ActiveSwap(swap.asset_id));
 
         token::Client::new(&env, &swap.token).transfer(
             &env.current_contract_address(),
@@ -1601,7 +1631,7 @@ impl AtomicSwap {
         swap::save_swap(&env, swap_id, &swap);
         env.storage()
             .persistent()
-            .remove(&DataKey::ActiveSwap(swap.ip_id));
+            .remove(&DataKey::ActiveSwap(swap.asset_id));
         env.storage()
             .persistent()
             .remove(&DataKey::PendingRuling(swap_id));
@@ -2209,7 +2239,7 @@ impl AtomicSwap {
         // Release the IP lock so a new swap can be created.
         env.storage()
             .persistent()
-            .remove(&DataKey::ActiveSwap(swap.ip_id));
+            .remove(&DataKey::ActiveSwap(swap.asset_id));
 
         // #253: Log history entry
         Self::append_history(&env, swap_id, SwapStatus::Cancelled);
@@ -2240,7 +2270,7 @@ impl AtomicSwap {
         swap::save_swap(&env, swap_id, &swap);
         env.storage()
             .persistent()
-            .remove(&DataKey::ActiveSwap(swap.ip_id));
+            .remove(&DataKey::ActiveSwap(swap.asset_id));
 
         let token_client = token::Client::new(&env, &swap.token);
 
@@ -2425,8 +2455,8 @@ impl AtomicSwap {
     }
 
     /// List all swap IDs ever created for a given IP. Returns `None` if none exist.
-    pub fn get_swaps_by_ip(env: Env, ip_id: u64) -> Option<Vec<u64>> {
-        env.storage().persistent().get(&DataKey::IpSwaps(ip_id))
+    pub fn get_swaps_by_asset(env: Env, asset_id: u64) -> Option<Vec<u64>> {
+        env.storage().persistent().get(&DataKey::AssetSwaps(asset_id))
     }
 
     /// Set the admin address. Can only be called once (bootstraps the admin).
@@ -2619,7 +2649,7 @@ impl AtomicSwap {
         swap::save_swap(&env, swap_id, &swap);
         env.storage()
             .persistent()
-            .remove(&DataKey::ActiveSwap(swap.ip_id));
+            .remove(&DataKey::ActiveSwap(swap.asset_id));
 
         Self::append_history(&env, swap_id, SwapStatus::Cancelled);
 
@@ -2668,6 +2698,14 @@ impl AtomicSwap {
         env.storage()
             .persistent()
             .get(&DataKey::SwapHistory(swap_id))
+            .unwrap_or(Vec::new(&env))
+    }
+
+    /// Returns the addresses that have approved `swap_id` so far via `approve_swap`.
+    pub fn get_swap_approvals(env: Env, swap_id: u64) -> Vec<Address> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::SwapApprovals(swap_id))
             .unwrap_or(Vec::new(&env))
     }
 
@@ -2739,11 +2777,11 @@ impl AtomicSwap {
     // ── #309: Batch swap initiation ───────────────────────────────────────────
 
     /// Seller initiates multiple patent sales in one call. Returns a Vec of swap IDs.
-    /// Each ip_ids[i] is paired with prices[i]; all swaps share the same buyer and token.
+    /// Each asset_ids[i] is paired with prices[i]; all swaps share the same buyer and token.
     pub fn batch_initiate_swap(
         env: Env,
         token: Address,
-        ip_ids: Vec<u64>,
+        asset_ids: Vec<u64>,
         seller: Address,
         prices: Vec<i128>,
         buyer: Address,
@@ -2753,7 +2791,7 @@ impl AtomicSwap {
         require_not_paused(&env);
         seller.require_auth();
 
-        let len = ip_ids.len();
+        let len = asset_ids.len();
 
         // #520: Validate batch parameters upfront
         if len == 0 {
@@ -2772,14 +2810,14 @@ impl AtomicSwap {
 
         // #522: Pre-validation pass — no mutations; ensures full atomicity
         for i in 0..len {
-            let ip_id = ip_ids.get(i).unwrap();
+            let asset_id = asset_ids.get(i).unwrap();
             let price = prices.get(i).unwrap();
             require_positive_price(&env, price);
-            registry::ensure_seller_owns_active_ip(&env, ip_id, &seller);
-            require_no_active_swap(&env, ip_id);
+            registry::ensure_seller_owns_active_asset(&env, asset_id, &seller);
+            require_no_active_swap(&env, asset_id);
             // Detect duplicate IP IDs within the batch
             for j in (i + 1)..len {
-                if ip_ids.get(j).unwrap() == ip_id {
+                if asset_ids.get(j).unwrap() == asset_id {
                     env.panic_with_error(Error::from_contract_error(
                         ContractError::SwapExists as u32,
                     ));
@@ -2791,12 +2829,12 @@ impl AtomicSwap {
         let mut swap_ids: Vec<u64> = Vec::new(&env);
 
         for i in 0..len {
-            let ip_id = ip_ids.get(i).unwrap();
+            let asset_id = asset_ids.get(i).unwrap();
             let price = prices.get(i).unwrap();
             let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(0);
 
             let swap = SwapRecord {
-                ip_id,
+                asset_id,
                 seller: seller.clone(),
                 buyer: buyer.clone(),
                 price,
@@ -2824,9 +2862,9 @@ impl AtomicSwap {
                 .extend_ttl(&DataKey::Swap(id), LEDGER_BUMP, LEDGER_BUMP);
             env.storage()
                 .persistent()
-                .set(&DataKey::ActiveSwap(ip_id), &id);
+                .set(&DataKey::ActiveSwap(asset_id), &id);
             env.storage().persistent().extend_ttl(
-                &DataKey::ActiveSwap(ip_id),
+                &DataKey::ActiveSwap(asset_id),
                 LEDGER_BUMP,
                 LEDGER_BUMP,
             );
@@ -2836,15 +2874,15 @@ impl AtomicSwap {
             let mut ip_swap_ids: Vec<u64> = env
                 .storage()
                 .persistent()
-                .get(&DataKey::IpSwaps(ip_id))
+                .get(&DataKey::AssetSwaps(asset_id))
                 .unwrap_or(Vec::new(&env));
             ip_swap_ids.push_back(id);
             env.storage()
                 .persistent()
-                .set(&DataKey::IpSwaps(ip_id), &ip_swap_ids);
+                .set(&DataKey::AssetSwaps(asset_id), &ip_swap_ids);
             env.storage()
                 .persistent()
-                .extend_ttl(&DataKey::IpSwaps(ip_id), 50000, 50000);
+                .extend_ttl(&DataKey::AssetSwaps(asset_id), 50000, 50000);
 
             Self::append_history(&env, id, SwapStatus::Pending);
             env.storage().instance().set(&DataKey::NextId, &(id + 1));
@@ -2853,7 +2891,7 @@ impl AtomicSwap {
                 (soroban_sdk::symbol_short!("swap_init"),),
                 SwapInitiatedEvent {
                     swap_id: id,
-                    ip_id,
+                    asset_id,
                     seller: seller.clone(),
                     buyer: buyer.clone(),
                     price,
@@ -2883,7 +2921,7 @@ impl AtomicSwap {
     pub fn start_ip_auction(
         env: Env,
         token: Address,
-        ip_id: u64,
+        asset_id: u64,
         seller: Address,
         min_bid: i128,
         duration_seconds: u64,
@@ -2892,13 +2930,13 @@ impl AtomicSwap {
         seller.require_auth();
 
         require_positive_price(&env, min_bid);
-        registry::ensure_seller_owns_active_ip(&env, ip_id, &seller);
+        registry::ensure_seller_owns_active_asset(&env, asset_id, &seller);
 
         // Check no active auction exists
         if env
             .storage()
             .persistent()
-            .has(&DataKey::ActiveAuction(ip_id))
+            .has(&DataKey::ActiveAuction(asset_id))
         {
             env.panic_with_error(Error::from_contract_error(ContractError::SwapExists as u32));
         }
@@ -2914,7 +2952,7 @@ impl AtomicSwap {
 
         let auction = AuctionRecord {
             auction_id,
-            ip_id,
+            asset_id,
             seller: seller.clone(),
             token: token.clone(),
             min_bid,
@@ -2936,9 +2974,9 @@ impl AtomicSwap {
 
         env.storage()
             .persistent()
-            .set(&DataKey::ActiveAuction(ip_id), &auction_id);
+            .set(&DataKey::ActiveAuction(asset_id), &auction_id);
         env.storage().persistent().extend_ttl(
-            &DataKey::ActiveAuction(ip_id),
+            &DataKey::ActiveAuction(asset_id),
             LEDGER_BUMP,
             LEDGER_BUMP,
         );
@@ -2954,7 +2992,7 @@ impl AtomicSwap {
             (soroban_sdk::symbol_short!("auc_strt"),),
             AuctionStartedEvent {
                 auction_id,
-                ip_id,
+                asset_id,
                 seller,
                 min_bid,
                 end_time,
@@ -3073,7 +3111,7 @@ impl AtomicSwap {
         // Remove active auction lock
         env.storage()
             .persistent()
-            .remove(&DataKey::ActiveAuction(auction.ip_id));
+            .remove(&DataKey::ActiveAuction(auction.asset_id));
 
         let winning_bid = auction.highest_bid;
         let winner = auction.highest_bidder.clone();
@@ -3092,7 +3130,7 @@ impl AtomicSwap {
             let swap_id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(0);
 
             let swap = SwapRecord {
-                ip_id: auction.ip_id,
+                asset_id: auction.asset_id,
                 seller: auction.seller.clone(),
                 buyer: buyer.clone(),
                 price: winning_bid,
@@ -3128,14 +3166,14 @@ impl AtomicSwap {
             let mut ip_swap_ids: Vec<u64> = env
                 .storage()
                 .persistent()
-                .get(&DataKey::IpSwaps(auction.ip_id))
+                .get(&DataKey::AssetSwaps(auction.asset_id))
                 .unwrap_or(Vec::new(&env));
             ip_swap_ids.push_back(swap_id);
             env.storage()
                 .persistent()
-                .set(&DataKey::IpSwaps(auction.ip_id), &ip_swap_ids);
+                .set(&DataKey::AssetSwaps(auction.asset_id), &ip_swap_ids);
             env.storage().persistent().extend_ttl(
-                &DataKey::IpSwaps(auction.ip_id),
+                &DataKey::AssetSwaps(auction.asset_id),
                 LEDGER_BUMP,
                 LEDGER_BUMP,
             );
@@ -3149,7 +3187,7 @@ impl AtomicSwap {
                 (soroban_sdk::symbol_short!("swap_init"),),
                 SwapInitiatedEvent {
                     swap_id,
-                    ip_id: auction.ip_id,
+                    asset_id: auction.asset_id,
                     seller: auction.seller,
                     buyer,
                     price: winning_bid,
@@ -3176,7 +3214,7 @@ impl AtomicSwap {
     pub fn initiate_swap_with_schedule(
         env: Env,
         token: Address,
-        ip_id: u64,
+        asset_id: u64,
         seller: Address,
         schedule: Vec<PaymentSchedule>,
         buyer: Address,
@@ -3197,13 +3235,13 @@ impl AtomicSwap {
         }
 
         require_positive_price(&env, total_price);
-        registry::ensure_seller_owns_active_ip(&env, ip_id, &seller);
-        require_no_active_swap(&env, ip_id);
+        registry::ensure_seller_owns_active_asset(&env, asset_id, &seller);
+        require_no_active_swap(&env, asset_id);
 
         let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(0);
 
         let swap = SwapRecord {
-            ip_id,
+            asset_id,
             seller: seller.clone(),
             buyer: buyer.clone(),
             price: total_price,
@@ -3232,9 +3270,9 @@ impl AtomicSwap {
 
         env.storage()
             .persistent()
-            .set(&DataKey::ActiveSwap(ip_id), &id);
+            .set(&DataKey::ActiveSwap(asset_id), &id);
         env.storage().persistent().extend_ttl(
-            &DataKey::ActiveSwap(ip_id),
+            &DataKey::ActiveSwap(asset_id),
             LEDGER_BUMP,
             LEDGER_BUMP,
         );
@@ -3263,18 +3301,18 @@ impl AtomicSwap {
 
         swap::append_swap_for_party(&env, &seller, &buyer, id);
 
-        let mut ip_ids: Vec<u64> = env
+        let mut asset_ids: Vec<u64> = env
             .storage()
             .persistent()
-            .get(&DataKey::IpSwaps(ip_id))
+            .get(&DataKey::AssetSwaps(asset_id))
             .unwrap_or(Vec::new(&env));
-        ip_ids.push_back(id);
+        asset_ids.push_back(id);
         env.storage()
             .persistent()
-            .set(&DataKey::IpSwaps(ip_id), &ip_ids);
+            .set(&DataKey::AssetSwaps(asset_id), &asset_ids);
         env.storage()
             .persistent()
-            .extend_ttl(&DataKey::IpSwaps(ip_id), LEDGER_BUMP, LEDGER_BUMP);
+            .extend_ttl(&DataKey::AssetSwaps(asset_id), LEDGER_BUMP, LEDGER_BUMP);
 
         Self::append_history(&env, id, SwapStatus::Pending);
         env.storage().instance().set(&DataKey::NextId, &(id + 1));
@@ -3283,7 +3321,7 @@ impl AtomicSwap {
             (soroban_sdk::symbol_short!("swap_init"),),
             SwapInitiatedEvent {
                 swap_id: id,
-                ip_id,
+                asset_id,
                 seller,
                 buyer,
                 price: total_price,
@@ -3414,7 +3452,7 @@ impl AtomicSwap {
     pub fn initiate_swap_installment(
         env: Env,
         token: Address,
-        ip_id: u64,
+        asset_id: u64,
         seller: Address,
         price: i128,
         buyer: Address,
@@ -3428,13 +3466,13 @@ impl AtomicSwap {
                 ContractError::PriceTooSmall as u32,
             ));
         }
-        registry::ensure_seller_owns_active_ip(&env, ip_id, &seller);
-        require_no_active_swap(&env, ip_id);
+        registry::ensure_seller_owns_active_asset(&env, asset_id, &seller);
+        require_no_active_swap(&env, asset_id);
 
         let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(0);
 
         let swap = SwapRecord {
-            ip_id,
+            asset_id,
             seller: seller.clone(),
             buyer: buyer.clone(),
             price,
@@ -3462,27 +3500,27 @@ impl AtomicSwap {
             .extend_ttl(&DataKey::Swap(id), LEDGER_BUMP, LEDGER_BUMP);
         env.storage()
             .persistent()
-            .set(&DataKey::ActiveSwap(ip_id), &id);
+            .set(&DataKey::ActiveSwap(asset_id), &id);
         env.storage().persistent().extend_ttl(
-            &DataKey::ActiveSwap(ip_id),
+            &DataKey::ActiveSwap(asset_id),
             LEDGER_BUMP,
             LEDGER_BUMP,
         );
 
         swap::append_swap_for_party(&env, &seller, &buyer, id);
 
-        let mut ip_ids: Vec<u64> = env
+        let mut asset_ids: Vec<u64> = env
             .storage()
             .persistent()
-            .get(&DataKey::IpSwaps(ip_id))
+            .get(&DataKey::AssetSwaps(asset_id))
             .unwrap_or(Vec::new(&env));
-        ip_ids.push_back(id);
+        asset_ids.push_back(id);
         env.storage()
             .persistent()
-            .set(&DataKey::IpSwaps(ip_id), &ip_ids);
+            .set(&DataKey::AssetSwaps(asset_id), &asset_ids);
         env.storage()
             .persistent()
-            .extend_ttl(&DataKey::IpSwaps(ip_id), 50000, 50000);
+            .extend_ttl(&DataKey::AssetSwaps(asset_id), 50000, 50000);
 
         Self::append_history(&env, id, SwapStatus::Pending);
         env.storage().instance().set(&DataKey::NextId, &(id + 1));
@@ -3491,7 +3529,7 @@ impl AtomicSwap {
             (symbol_short!("swap_init"),),
             SwapInitiatedEvent {
                 swap_id: id,
-                ip_id,
+                asset_id,
                 seller,
                 buyer,
                 price,
@@ -3674,7 +3712,7 @@ impl AtomicSwap {
         swap::save_swap(&env, swap_id, &swap);
         env.storage()
             .persistent()
-            .remove(&DataKey::ActiveSwap(swap.ip_id));
+            .remove(&DataKey::ActiveSwap(swap.asset_id));
         env.storage()
             .persistent()
             .remove(&DataKey::ArbitrationTimestamp(swap_id));
@@ -3816,7 +3854,7 @@ impl AtomicSwap {
         swap::save_swap(&env, swap_id, &swap);
         env.storage()
             .persistent()
-            .remove(&DataKey::ActiveSwap(swap.ip_id));
+            .remove(&DataKey::ActiveSwap(swap.asset_id));
         env.storage()
             .persistent()
             .remove(&DataKey::SwapArbitrator(swap_id));
@@ -3854,7 +3892,7 @@ impl AtomicSwap {
         );
 
         // Verify commitment
-        let valid = registry::verify_commitment(&env, swap.ip_id, &secret, &blinding_factor);
+        let valid = registry::verify_commitment(&env, swap.asset_id, &secret, &blinding_factor);
 
         let token_client = token::Client::new(&env, &swap.token);
 
@@ -3884,7 +3922,7 @@ impl AtomicSwap {
             swap::save_swap(&env, swap_id, &swap);
             env.storage()
                 .persistent()
-                .remove(&DataKey::ActiveSwap(swap.ip_id));
+                .remove(&DataKey::ActiveSwap(swap.asset_id));
 
             env.events().publish(
                 (soroban_sdk::symbol_short!("atom_ref"),),
@@ -3901,7 +3939,7 @@ impl AtomicSwap {
             swap::save_swap(&env, swap_id, &swap);
             env.storage()
                 .persistent()
-                .remove(&DataKey::ActiveSwap(swap.ip_id));
+                .remove(&DataKey::ActiveSwap(swap.asset_id));
 
             // Process payment
             let config = Self::protocol_config(&env);
@@ -4113,7 +4151,7 @@ impl AtomicSwap {
             );
             let valid = registry::verify_commitment(
                 &env,
-                swap.ip_id,
+                swap.asset_id,
                 &secrets.get(i).unwrap(),
                 &blinding_factors.get(i).unwrap(),
             );
@@ -4131,7 +4169,7 @@ impl AtomicSwap {
             swap::save_swap(&env, swap_id, &swap);
             env.storage()
                 .persistent()
-                .remove(&DataKey::ActiveSwap(swap.ip_id));
+                .remove(&DataKey::ActiveSwap(swap.asset_id));
             Self::append_history(&env, swap_id, SwapStatus::Completed);
 
             let token_client = token::Client::new(&env, &swap.token);
@@ -4284,7 +4322,7 @@ impl AtomicSwap {
             // Release the IP lock
             env.storage()
                 .persistent()
-                .remove(&DataKey::ActiveSwap(swap.ip_id));
+                .remove(&DataKey::ActiveSwap(swap.asset_id));
 
             // Store cancellation reason
             env.storage()
@@ -4324,7 +4362,7 @@ impl AtomicSwap {
     pub fn batch_initiate_swap_insured(
         env: Env,
         token: Address,
-        ip_ids: Vec<u64>,
+        asset_ids: Vec<u64>,
         seller: Address,
         prices: Vec<i128>,
         buyer: Address,
@@ -4335,16 +4373,16 @@ impl AtomicSwap {
         require_not_paused(&env);
         seller.require_auth();
 
-        let len = ip_ids.len();
+        let len = asset_ids.len();
         let mut swap_ids: Vec<u64> = Vec::new(&env);
 
         for i in 0..len {
-            let ip_id = ip_ids.get(i).unwrap();
+            let asset_id = asset_ids.get(i).unwrap();
             let price = prices.get(i).unwrap();
 
             require_positive_price(&env, price);
-            registry::ensure_seller_owns_active_ip(&env, ip_id, &seller);
-            require_no_active_swap(&env, ip_id);
+            registry::ensure_seller_owns_active_asset(&env, asset_id, &seller);
+            require_no_active_swap(&env, asset_id);
 
             let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(0);
             let insurance_premium = if insurance_enabled {
@@ -4354,7 +4392,7 @@ impl AtomicSwap {
             };
 
             let swap = SwapRecord {
-                ip_id,
+                asset_id,
                 seller: seller.clone(),
                 buyer: buyer.clone(),
                 price,
@@ -4393,9 +4431,9 @@ impl AtomicSwap {
                 .extend_ttl(&DataKey::Swap(id), LEDGER_BUMP, LEDGER_BUMP);
             env.storage()
                 .persistent()
-                .set(&DataKey::ActiveSwap(ip_id), &id);
+                .set(&DataKey::ActiveSwap(asset_id), &id);
             env.storage().persistent().extend_ttl(
-                &DataKey::ActiveSwap(ip_id),
+                &DataKey::ActiveSwap(asset_id),
                 LEDGER_BUMP,
                 LEDGER_BUMP,
             );
@@ -4405,15 +4443,15 @@ impl AtomicSwap {
             let mut ip_swap_ids: Vec<u64> = env
                 .storage()
                 .persistent()
-                .get(&DataKey::IpSwaps(ip_id))
+                .get(&DataKey::AssetSwaps(asset_id))
                 .unwrap_or(Vec::new(&env));
             ip_swap_ids.push_back(id);
             env.storage()
                 .persistent()
-                .set(&DataKey::IpSwaps(ip_id), &ip_swap_ids);
+                .set(&DataKey::AssetSwaps(asset_id), &ip_swap_ids);
             env.storage()
                 .persistent()
-                .extend_ttl(&DataKey::IpSwaps(ip_id), 50000, 50000);
+                .extend_ttl(&DataKey::AssetSwaps(asset_id), 50000, 50000);
 
             Self::append_history(&env, id, SwapStatus::Pending);
             env.storage().instance().set(&DataKey::NextId, &(id + 1));
@@ -4422,7 +4460,7 @@ impl AtomicSwap {
                 (soroban_sdk::symbol_short!("swap_init"),),
                 SwapInitiatedEvent {
                     swap_id: id,
-                    ip_id,
+                    asset_id,
                     seller: seller.clone(),
                     buyer: buyer.clone(),
                     price,
@@ -4471,7 +4509,7 @@ impl AtomicSwap {
     pub fn initiate_escrow_swap(
         env: Env,
         token: Address,
-        ip_id: u64,
+        asset_id: u64,
         seller: Address,
         price: i128,
         buyer: Address,
@@ -4480,13 +4518,13 @@ impl AtomicSwap {
         require_not_paused(&env);
         seller.require_auth();
         require_positive_price(&env, price);
-        registry::ensure_seller_owns_active_ip(&env, ip_id, &seller);
-        require_no_active_swap(&env, ip_id);
+        registry::ensure_seller_owns_active_asset(&env, asset_id, &seller);
+        require_no_active_swap(&env, asset_id);
 
         let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(0);
 
         let swap = SwapRecord {
-            ip_id,
+            asset_id,
             seller: seller.clone(),
             buyer: buyer.clone(),
             price,
@@ -4514,9 +4552,9 @@ impl AtomicSwap {
             .extend_ttl(&DataKey::Swap(id), LEDGER_BUMP, LEDGER_BUMP);
         env.storage()
             .persistent()
-            .set(&DataKey::ActiveSwap(ip_id), &id);
+            .set(&DataKey::ActiveSwap(asset_id), &id);
         env.storage().persistent().extend_ttl(
-            &DataKey::ActiveSwap(ip_id),
+            &DataKey::ActiveSwap(asset_id),
             LEDGER_BUMP,
             LEDGER_BUMP,
         );
@@ -4535,7 +4573,7 @@ impl AtomicSwap {
             (soroban_sdk::symbol_short!("esc_ini"),),
             SwapInitiatedEvent {
                 swap_id: id,
-                ip_id,
+                asset_id,
                 seller,
                 buyer,
                 price,
@@ -4547,12 +4585,12 @@ impl AtomicSwap {
 
     /// Batch initiate multiple escrow-mode swaps in a single transaction.
     ///
-    /// Each `ip_ids[i]` is paired with `prices[i]` and `timeouts[i]` (expiry).
+    /// Each `asset_ids[i]` is paired with `prices[i]` and `timeouts[i]` (expiry).
     /// Returns a vector of assigned swap IDs.
     pub fn batch_initiate_escrow(
         env: Env,
         token: Address,
-        ip_ids: Vec<u64>,
+        asset_ids: Vec<u64>,
         seller: Address,
         prices: Vec<i128>,
         buyer: Address,
@@ -4561,7 +4599,7 @@ impl AtomicSwap {
         require_not_paused(&env);
         seller.require_auth();
 
-        let len = ip_ids.len();
+        let len = asset_ids.len();
         if len == 0 || prices.len() != len || timeouts.len() != len {
             env.panic_with_error(Error::from_contract_error(
                 ContractError::PriceTooSmall as u32,
@@ -4571,18 +4609,18 @@ impl AtomicSwap {
         let mut swap_ids: Vec<u64> = Vec::new(&env);
 
         for i in 0..len {
-            let ip_id = ip_ids.get(i).unwrap();
+            let asset_id = asset_ids.get(i).unwrap();
             let price = prices.get(i).unwrap();
             let timeout = timeouts.get(i).unwrap();
 
             require_positive_price(&env, price);
-            registry::ensure_seller_owns_active_ip(&env, ip_id, &seller);
-            require_no_active_swap(&env, ip_id);
+            registry::ensure_seller_owns_active_asset(&env, asset_id, &seller);
+            require_no_active_swap(&env, asset_id);
 
             let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(0);
 
             let swap = SwapRecord {
-                ip_id,
+                asset_id,
                 seller: seller.clone(),
                 buyer: buyer.clone(),
                 price,
@@ -4610,9 +4648,9 @@ impl AtomicSwap {
                 .extend_ttl(&DataKey::Swap(id), LEDGER_BUMP, LEDGER_BUMP);
             env.storage()
                 .persistent()
-                .set(&DataKey::ActiveSwap(ip_id), &id);
+                .set(&DataKey::ActiveSwap(asset_id), &id);
             env.storage().persistent().extend_ttl(
-                &DataKey::ActiveSwap(ip_id),
+                &DataKey::ActiveSwap(asset_id),
                 LEDGER_BUMP,
                 LEDGER_BUMP,
             );
@@ -4628,15 +4666,15 @@ impl AtomicSwap {
             let mut ip_swap_ids: Vec<u64> = env
                 .storage()
                 .persistent()
-                .get(&DataKey::IpSwaps(ip_id))
+                .get(&DataKey::AssetSwaps(asset_id))
                 .unwrap_or(Vec::new(&env));
             ip_swap_ids.push_back(id);
             env.storage()
                 .persistent()
-                .set(&DataKey::IpSwaps(ip_id), &ip_swap_ids);
+                .set(&DataKey::AssetSwaps(asset_id), &ip_swap_ids);
             env.storage()
                 .persistent()
-                .extend_ttl(&DataKey::IpSwaps(ip_id), 50000, 50000);
+                .extend_ttl(&DataKey::AssetSwaps(asset_id), 50000, 50000);
 
             Self::append_history(&env, id, SwapStatus::Pending);
             env.storage().instance().set(&DataKey::NextId, &(id + 1));
@@ -4645,7 +4683,7 @@ impl AtomicSwap {
                 (soroban_sdk::symbol_short!("esc_ini"),),
                 SwapInitiatedEvent {
                     swap_id: id,
-                    ip_id,
+                    asset_id,
                     seller: seller.clone(),
                     buyer: buyer.clone(),
                     price,
@@ -4810,7 +4848,7 @@ impl AtomicSwap {
         swap::save_swap(&env, swap_id, &swap);
         env.storage()
             .persistent()
-            .remove(&DataKey::ActiveSwap(swap.ip_id));
+            .remove(&DataKey::ActiveSwap(swap.asset_id));
         env.storage()
             .persistent()
             .remove(&DataKey::EscrowDeposit(swap_id));
@@ -4915,7 +4953,7 @@ impl AtomicSwap {
     pub fn initiate_swap_with_signers(
         env: Env,
         token: Address,
-        ip_id: u64,
+        asset_id: u64,
         seller: Address,
         price: i128,
         buyer: Address,
@@ -4924,8 +4962,8 @@ impl AtomicSwap {
         require_not_paused(&env);
         seller.require_auth();
         require_positive_price(&env, price);
-        registry::ensure_seller_owns_active_ip(&env, ip_id, &seller);
-        require_no_active_swap(&env, ip_id);
+        registry::ensure_seller_owns_active_asset(&env, asset_id, &seller);
+        require_no_active_swap(&env, asset_id);
 
         if signers.is_empty() {
             env.panic_with_error(Error::from_contract_error(
@@ -4936,7 +4974,7 @@ impl AtomicSwap {
         let id: u64 = env.storage().instance().get(&DataKey::NextId).unwrap_or(0);
 
         let swap = SwapRecord {
-            ip_id,
+            asset_id,
             seller: seller.clone(),
             buyer: buyer.clone(),
             price,
@@ -4964,9 +5002,9 @@ impl AtomicSwap {
             .extend_ttl(&DataKey::Swap(id), LEDGER_BUMP, LEDGER_BUMP);
         env.storage()
             .persistent()
-            .set(&DataKey::ActiveSwap(ip_id), &id);
+            .set(&DataKey::ActiveSwap(asset_id), &id);
         env.storage().persistent().extend_ttl(
-            &DataKey::ActiveSwap(ip_id),
+            &DataKey::ActiveSwap(asset_id),
             LEDGER_BUMP,
             LEDGER_BUMP,
         );
@@ -4981,18 +5019,18 @@ impl AtomicSwap {
 
         swap::append_swap_for_party(&env, &seller, &buyer, id);
 
-        let mut ip_ids: Vec<u64> = env
+        let mut asset_ids: Vec<u64> = env
             .storage()
             .persistent()
-            .get(&DataKey::IpSwaps(ip_id))
+            .get(&DataKey::AssetSwaps(asset_id))
             .unwrap_or(Vec::new(&env));
-        ip_ids.push_back(id);
+        asset_ids.push_back(id);
         env.storage()
             .persistent()
-            .set(&DataKey::IpSwaps(ip_id), &ip_ids);
+            .set(&DataKey::AssetSwaps(asset_id), &asset_ids);
         env.storage()
             .persistent()
-            .extend_ttl(&DataKey::IpSwaps(ip_id), LEDGER_BUMP, LEDGER_BUMP);
+            .extend_ttl(&DataKey::AssetSwaps(asset_id), LEDGER_BUMP, LEDGER_BUMP);
 
         Self::append_history(&env, id, SwapStatus::Pending);
         env.storage().instance().set(&DataKey::NextId, &(id + 1));
@@ -5001,7 +5039,7 @@ impl AtomicSwap {
             (soroban_sdk::symbol_short!("swap_init"),),
             SwapInitiatedEvent {
                 swap_id: id,
-                ip_id,
+                asset_id,
                 seller,
                 buyer,
                 price,
@@ -5336,7 +5374,7 @@ impl AtomicSwap {
             swap::save_swap(&env, swap_id, &swap);
             env.storage()
                 .persistent()
-                .remove(&DataKey::ActiveSwap(swap.ip_id));
+                .remove(&DataKey::ActiveSwap(swap.asset_id));
             env.storage()
                 .persistent()
                 .remove(&DataKey::ArbitrationTimestamp(swap_id));
@@ -5458,7 +5496,7 @@ mod installment_tests {
 
     fn make_swap(env: &Env, price: i128, paid: i128, is_installment: bool) -> SwapRecord {
         SwapRecord {
-            ip_id: 1,
+            asset_id: 1,
             seller: <soroban_sdk::Address as TestAddress>::generate(env),
             buyer: <soroban_sdk::Address as TestAddress>::generate(env),
             price,
@@ -5623,7 +5661,6 @@ mod installment_tests {
 
     #[test]
     fn test_initiate_swap_installment_creates_pending_installment_swap() {
-        use ip_registry::{IpRegistry, IpRegistryClient};
         use soroban_sdk::token::StellarAssetClient;
 
         let env = Env::default();
@@ -5633,15 +5670,6 @@ mod installment_tests {
         let buyer = <soroban_sdk::Address as TestAddress>::generate(&env);
         let admin = <soroban_sdk::Address as TestAddress>::generate(&env);
 
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(&env, &registry_id);
-        let secret = BytesN::from_array(&env, &[2u8; 32]);
-        let blinding = BytesN::from_array(&env, &[3u8; 32]);
-        let mut preimage = soroban_sdk::Bytes::new(&env);
-        preimage.append(&soroban_sdk::Bytes::from(secret.clone()));
-        preimage.append(&soroban_sdk::Bytes::from(blinding.clone()));
-        let commitment_hash: BytesN<32> = env.crypto().sha256(&preimage).into();
-        let ip_id = registry.commit_ip(&seller, &commitment_hash, &0u32);
 
         let token_id = env
             .register_stellar_asset_contract_v2(admin.clone())
@@ -5650,10 +5678,17 @@ mod installment_tests {
 
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        client.initialize();
+        let secret = BytesN::from_array(&env, &[2u8; 32]);
+        let blinding = BytesN::from_array(&env, &[3u8; 32]);
+        let mut preimage = soroban_sdk::Bytes::new(&env);
+        preimage.append(&soroban_sdk::Bytes::from(secret.clone()));
+        preimage.append(&soroban_sdk::Bytes::from(blinding.clone()));
+        let commitment_hash: BytesN<32> = env.crypto().sha256(&preimage).into();
+        let asset_id = client.register_asset(&seller, &commitment_hash);
 
         let swap_id =
-            client.initiate_swap_installment(&token_id, &ip_id, &seller, &600_i128, &buyer, &3_u32);
+            client.initiate_swap_installment(&token_id, &asset_id, &seller, &600_i128, &buyer, &3_u32);
 
         let swap = client.get_swap(&swap_id).unwrap();
         assert_eq!(swap.status, SwapStatus::Pending);
@@ -5665,7 +5700,6 @@ mod installment_tests {
 
     #[test]
     fn test_initiate_swap_installment_then_pay_in_parts() {
-        use ip_registry::{IpRegistry, IpRegistryClient};
         use soroban_sdk::token::StellarAssetClient;
 
         let env = Env::default();
@@ -5675,15 +5709,6 @@ mod installment_tests {
         let buyer = <soroban_sdk::Address as TestAddress>::generate(&env);
         let admin = <soroban_sdk::Address as TestAddress>::generate(&env);
 
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(&env, &registry_id);
-        let secret = BytesN::from_array(&env, &[2u8; 32]);
-        let blinding = BytesN::from_array(&env, &[3u8; 32]);
-        let mut preimage = soroban_sdk::Bytes::new(&env);
-        preimage.append(&soroban_sdk::Bytes::from(secret.clone()));
-        preimage.append(&soroban_sdk::Bytes::from(blinding.clone()));
-        let commitment_hash: BytesN<32> = env.crypto().sha256(&preimage).into();
-        let ip_id = registry.commit_ip(&seller, &commitment_hash, &0u32);
 
         let token_id = env
             .register_stellar_asset_contract_v2(admin.clone())
@@ -5692,10 +5717,17 @@ mod installment_tests {
 
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        client.initialize();
+        let secret = BytesN::from_array(&env, &[2u8; 32]);
+        let blinding = BytesN::from_array(&env, &[3u8; 32]);
+        let mut preimage = soroban_sdk::Bytes::new(&env);
+        preimage.append(&soroban_sdk::Bytes::from(secret.clone()));
+        preimage.append(&soroban_sdk::Bytes::from(blinding.clone()));
+        let commitment_hash: BytesN<32> = env.crypto().sha256(&preimage).into();
+        let asset_id = client.register_asset(&seller, &commitment_hash);
 
         let swap_id =
-            client.initiate_swap_installment(&token_id, &ip_id, &seller, &300_i128, &buyer, &3_u32);
+            client.initiate_swap_installment(&token_id, &asset_id, &seller, &300_i128, &buyer, &3_u32);
 
         // First installment
         client.submit_installment_payment(&swap_id, &100);
@@ -5720,7 +5752,6 @@ mod installment_tests {
     #[test]
     #[should_panic]
     fn test_initiate_swap_installment_zero_installments_panics() {
-        use ip_registry::{IpRegistry, IpRegistryClient};
         use soroban_sdk::token::StellarAssetClient;
 
         let env = Env::default();
@@ -5730,15 +5761,6 @@ mod installment_tests {
         let buyer = <soroban_sdk::Address as TestAddress>::generate(&env);
         let admin = <soroban_sdk::Address as TestAddress>::generate(&env);
 
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(&env, &registry_id);
-        let secret = BytesN::from_array(&env, &[2u8; 32]);
-        let blinding = BytesN::from_array(&env, &[3u8; 32]);
-        let mut preimage = soroban_sdk::Bytes::new(&env);
-        preimage.append(&soroban_sdk::Bytes::from(secret.clone()));
-        preimage.append(&soroban_sdk::Bytes::from(blinding.clone()));
-        let commitment_hash: BytesN<32> = env.crypto().sha256(&preimage).into();
-        let ip_id = registry.commit_ip(&seller, &commitment_hash, &0u32);
 
         let token_id = env
             .register_stellar_asset_contract_v2(admin.clone())
@@ -5747,10 +5769,17 @@ mod installment_tests {
 
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        client.initialize();
+        let secret = BytesN::from_array(&env, &[2u8; 32]);
+        let blinding = BytesN::from_array(&env, &[3u8; 32]);
+        let mut preimage = soroban_sdk::Bytes::new(&env);
+        preimage.append(&soroban_sdk::Bytes::from(secret.clone()));
+        preimage.append(&soroban_sdk::Bytes::from(blinding.clone()));
+        let commitment_hash: BytesN<32> = env.crypto().sha256(&preimage).into();
+        let asset_id = client.register_asset(&seller, &commitment_hash);
 
         // num_installments = 0 should panic
-        client.initiate_swap_installment(&token_id, &ip_id, &seller, &300_i128, &buyer, &0_u32);
+        client.initiate_swap_installment(&token_id, &asset_id, &seller, &300_i128, &buyer, &0_u32);
     }
 }
 
@@ -5771,7 +5800,7 @@ mod batch_enhancement_tests {
         status: SwapStatus,
     ) {
         let swap = SwapRecord {
-            ip_id: id,
+            asset_id: id,
             seller: seller.clone(),
             buyer: buyer.clone(),
             price,
@@ -5798,9 +5827,9 @@ mod batch_enhancement_tests {
             .extend_ttl(&DataKey::Swap(id), LEDGER_BUMP, LEDGER_BUMP);
         env.storage()
             .persistent()
-            .set(&DataKey::ActiveSwap(swap.ip_id), &id);
+            .set(&DataKey::ActiveSwap(swap.asset_id), &id);
         env.storage().persistent().extend_ttl(
-            &DataKey::ActiveSwap(swap.ip_id),
+            &DataKey::ActiveSwap(swap.asset_id),
             LEDGER_BUMP,
             LEDGER_BUMP,
         );
@@ -6071,7 +6100,6 @@ mod batch_enhancement_tests {
 
 #[cfg(test)]
 mod insurance_reserve_tests {
-    use ip_registry::{IpRegistry, IpRegistryClient};
     use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, BytesN, Env};
 
     use crate::{AtomicSwap, AtomicSwapClient, DataKey};
@@ -6089,14 +6117,14 @@ mod insurance_reserve_tests {
         swap_b: u64,
     }
 
-    fn commit_ip(env: &Env, registry: &IpRegistryClient, owner: &Address, seed: u8) -> u64 {
+    fn commit_ip(env: &Env, client: &AtomicSwapClient, owner: &Address, seed: u8) -> u64 {
         let secret = BytesN::from_array(env, &[seed; 32]);
         let blinding = BytesN::from_array(env, &[seed.wrapping_add(1); 32]);
         let mut preimage = soroban_sdk::Bytes::new(env);
         preimage.append(&soroban_sdk::Bytes::from(secret));
         preimage.append(&soroban_sdk::Bytes::from(blinding));
         let commitment_hash: BytesN<32> = env.crypto().sha256(&preimage).into();
-        registry.commit_ip(owner, &commitment_hash, &0u32)
+        client.register_asset(owner, &commitment_hash)
     }
 
     /// Two independently valid policies on the same token, both accepted so the
@@ -6109,11 +6137,6 @@ mod insurance_reserve_tests {
         let funder = Address::generate(env);
         let token_admin = Address::generate(env);
 
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(env, &registry_id);
-        let ip_a = commit_ip(env, &registry, &seller, 2);
-        let ip_b = commit_ip(env, &registry, &seller, 7);
-
         let token = env
             .register_stellar_asset_contract_v2(token_admin.clone())
             .address();
@@ -6124,7 +6147,10 @@ mod insurance_reserve_tests {
 
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(env, &contract_id);
-        client.initialize(&registry_id);
+        client.initialize();
+
+        let ip_a = commit_ip(env, &client, &seller, 2);
+        let ip_b = commit_ip(env, &client, &seller, 7);
 
         let swap_a = client.initiate_swap(
             &token, &ip_a, &seller, &PRICE, &buyer_a, &0u32, &None, &0i128, &true,

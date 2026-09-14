@@ -1,6 +1,6 @@
 # Atomic Swap Flow
 
-This document describes the trustless patent sale mechanism in AtomicIP.
+This document describes the trustless patent sale mechanism in SwapIT.
 
 ## Overview
 

@@ -7,13 +7,13 @@
 
 #[cfg(test)]
 mod chaos {
-    use soroban_sdk::{Env, String, Vec};
+    use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
 
     use crate::upgrade::{
         build_v1_schema, check_schema_compatibility, store_schema, load_schema,
         ContractSchema, ErrorEntry, FunctionEntry,
     };
-    use crate::ContractError;
+    use crate::{ArbitratorCommittee, ContractError, DataKey, SwapStatus};
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -437,7 +437,7 @@ mod chaos {
 
         let swap_id: u64 = 42;
         let swap = crate::SwapRecord {
-            ip_id: 1,
+            asset_id: 1,
             seller: seller.clone(),
             buyer: buyer.clone(),
             price: 1000,
@@ -493,7 +493,7 @@ mod chaos {
 
         let swap_id: u64 = 99;
         let swap = crate::SwapRecord {
-            ip_id: 1,
+            asset_id: 1,
             seller: seller.clone(),
             buyer: buyer.clone(),
             price: 500,

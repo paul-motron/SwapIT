@@ -3,12 +3,18 @@
 # out alongside a FIXME marker (see #804) — that pattern hides a test module
 # from CI silently, so it must not slip back in unnoticed.
 #
-# Scoped to contracts/ip_registry, the crate #804 covers. Other crates (e.g.
-# atomic_swap) carry their own pre-existing disabled-test debt tracked
-# separately and are out of scope here.
+# Originally scoped to contracts/ip_registry, the crate #804 covered; that
+# crate has since been removed (SwapIT dropped the IP-registry contract in
+# favor of being a pure atomic-swap platform). atomic_swap carries its own
+# pre-existing disabled-test debt tracked separately and stays out of scope
+# here, so this check is currently a no-op until a new target is chosen.
 set -euo pipefail
 
 TARGET_DIR="contracts/ip_registry"
+if [ ! -d "$TARGET_DIR" ]; then
+  echo "No target directory ($TARGET_DIR removed); nothing to check."
+  exit 0
+fi
 found=0
 while IFS= read -r entry; do
   file="${entry%%:*}"

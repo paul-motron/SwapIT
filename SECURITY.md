@@ -2,7 +2,7 @@
 
 ## Overview
 
-The AtomicIP project handles real XLM and intellectual property assets through Soroban smart contracts. Security is critical to protect users' funds and IP rights.
+The SwapIT project handles real XLM and other assets through Soroban smart contracts. Security is critical to protect users' funds through every step of a swap.
 
 ## Reporting a Vulnerability
 
@@ -14,8 +14,8 @@ We take security vulnerabilities seriously. If you discover a security vulnerabi
 
 Instead, please report vulnerabilities via one of the following methods:
 
-1. **Email**: Send a detailed report to security@atomicip.io
-2. **GitHub Security Advisories**: Use the [Security Advisories](https://github.com/AtomicIP/AtomicIP-/security/advisories/new) page
+1. **Email**: Send a detailed report to security@swapit.io
+2. **GitHub Security Advisories**: Use the [Security Advisories](https://github.com/paul-motron/SwapIT/security/advisories/new) page
 
 ### What to Include
 
@@ -43,18 +43,18 @@ When reporting a vulnerability, please include:
 
 ## Security Best Practices for Users
 
-### For IP Owners
+### For Asset Owners (Sellers)
 
-- **Keep your secret safe**: The secret used to create your commitment hash is the only way to prove ownership. Store it securely offline.
-- **Verify commitment hashes**: Before committing, verify your commitment hash is correctly computed: `sha256(secret || blinding_factor)`
+- **Keep your secret safe**: The secret used to create your commitment hash is the only way to unlock a swap. Store it securely offline until you're ready to reveal it.
+- **Verify commitment hashes**: Before registering an asset, verify your commitment hash is correctly computed: `sha256(secret || blinding_factor)`
 - **Use strong secrets**: Use cryptographically secure random values for secrets and blinding factors
 - **Backup your keys**: Maintain secure backups of your Stellar wallet keys
 
 ### For Swap Participants
 
-- **Verify swap details**: Always verify the IP ID, price, and counterparty before accepting a swap
+- **Verify swap details**: Always verify the asset ID, price, and counterparty before accepting a swap
 - **Check expiry times**: Be aware of swap expiry times to avoid losing funds
-- **Use trusted registries**: Only interact with verified IP registry contracts
+- **Use the deployed contract**: Only interact with the verified, deployed `atomic_swap` contract address
 - **Monitor transactions**: Review transaction details before signing
 
 ## Known Limitations
@@ -82,7 +82,7 @@ When reporting a vulnerability, please include:
 
 ### Implemented
 
-- ✅ Pedersen commitment scheme for IP privacy
+- ✅ Hiding commitment scheme so assets are registered without revealing their secret
 - ✅ Atomic swap with key verification
 - ✅ Authorization checks via `require_auth()`
 - ✅ Duplicate commitment prevention
@@ -145,15 +145,15 @@ Run all gates locally with `./scripts/security-checks.sh`.
 
 ### Audit Reports
 
-Audit reports will be published in the [security-advisories](https://github.com/AtomicIP/AtomicIP-/security/advisories) section after completion.
+Audit reports will be published in the [security-advisories](https://github.com/paul-motron/SwapIT/security/advisories) section after completion.
 
 ## Contact
 
 For security-related inquiries:
 
-- **Security Team**: security@atomicip.io
-- **General Contact**: contact@atomicip.io
-- **GitHub**: [Security Advisories](https://github.com/AtomicIP/AtomicIP-/security/advisories)
+- **Security Team**: security@swapit.io
+- **General Contact**: contact@swapit.io
+- **GitHub**: [Security Advisories](https://github.com/paul-motron/SwapIT/security/advisories)
 
 ## Bug Bounty Program (Planned)
 
@@ -164,11 +164,11 @@ We plan to launch a bug bounty program after mainnet launch. Rewards will be bas
 - **Medium**: $500 - $1,000
 - **Low**: $100 - $500
 
-Details will be published at [bugbounty.atomicip.io](https://bugbounty.atomicip.io) when the program launches.
+Details will be published at [bugbounty.swapit.io](https://bugbounty.swapit.io) when the program launches.
 
 ## Legal
 
-This security policy is subject to our [Terms of Service](https://atomicip.io/terms) and [Privacy Policy](https://atomicip.io/privacy).
+This security policy is subject to our [Terms of Service](https://swapit.io/terms) and [Privacy Policy](https://swapit.io/privacy).
 
 ---
 

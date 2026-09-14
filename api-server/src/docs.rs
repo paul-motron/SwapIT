@@ -1009,9 +1009,9 @@ impl ApiDocGenerator {
         endpoints.extend(Self::batch_and_event_docs());
 
         ApiDocumentation {
-            title: "Atomic Patent API".to_string(),
+            title: "SwapIT API".to_string(),
             version: "1.0.0".to_string(),
-            description: "Machine-readable specification for the Atomic Patent Soroban smart contract interface.".to_string(),
+            description: "Machine-readable specification for the SwapIT Soroban smart contract interface.".to_string(),
             base_url: "https://api.atomicpatent.io".to_string(),
             endpoints,
             auth_schemes: vec![
@@ -1136,7 +1136,7 @@ mod tests {
     #[test]
     fn test_full_documentation_generation() {
         let docs = ApiDocGenerator::generate_full_documentation();
-        assert_eq!(docs.title, "Atomic Patent API");
+        assert_eq!(docs.title, "SwapIT API");
         assert_eq!(docs.endpoints.len(), 19);
         assert!(!docs.auth_schemes.is_empty());
         assert!(!docs.error_codes.is_empty());
@@ -1147,7 +1147,7 @@ mod tests {
         let json = ApiDocGenerator::export_json();
         assert!(json.is_ok());
         let json_str = json.unwrap();
-        assert!(json_str.contains("Atomic Patent API"));
+        assert!(json_str.contains("SwapIT API"));
         assert!(json_str.contains("/v1/swap/batch-initiate"));
         assert!(json_str.contains("/v1/bulk/commit-ip"));
     }
@@ -1155,7 +1155,7 @@ mod tests {
     #[test]
     fn test_export_markdown() {
         let md = ApiDocGenerator::export_markdown();
-        assert!(md.contains("# Atomic Patent API"));
+        assert!(md.contains("# SwapIT API"));
         assert!(md.contains("## Endpoints"));
         assert!(md.contains("## Authentication"));
         assert!(md.contains("/v1/ip/commit"));
