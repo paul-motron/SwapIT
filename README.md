@@ -1,35 +1,35 @@
-# Atomic Patent — The Instant IP Ledger
+# SwapIT — Trustless Atomic Swaps on Stellar
 
-[![CI](https://github.com/AtomicIP/AtomicIP-/actions/workflows/ci.yml/badge.svg)](https://github.com/AtomicIP/AtomicIP-/actions/workflows/ci.yml)
-[![Security Audit](https://github.com/AtomicIP/AtomicIP-/actions/workflows/ci.yml/badge.svg)](https://github.com/AtomicIP/AtomicIP-/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/AtomicIP/AtomicIP-/branch/main/graph/badge.svg)](https://codecov.io/gh/AtomicIP/AtomicIP-)
+[![CI](https://github.com/paul-motron/SwapIT/actions/workflows/ci.yml/badge.svg)](https://github.com/paul-motron/SwapIT/actions/workflows/ci.yml)
+[![Security Audit](https://github.com/paul-motron/SwapIT/actions/workflows/ci.yml/badge.svg)](https://github.com/paul-motron/SwapIT/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/paul-motron/SwapIT/branch/main/graph/badge.svg)](https://codecov.io/gh/paul-motron/SwapIT)
 
-A decentralized Intellectual Property registry built on Stellar Soroban smart contracts using Pedersen Commitments and Atomic Swaps.
+A trustless atomic swap protocol built on Stellar Soroban. Two parties swap an asset for payment in one transaction — the buyer pays into escrow, the seller reveals the secret that unlocks their side, and the contract enforces that either both sides settle or neither does.
 
-In engineering, proving "Prior Art" across borders is expensive, slow, and lawyer-dependent. Atomic Patent lets you claim an idea instantly — without revealing it to competitors — and sell it globally without intermediaries.
+## 🎯 What is SwapIT?
 
-## 🎯 What is Atomic Patent?
+SwapIT is a hash-locked atomic swap contract for Stellar. Sellers register a swappable asset behind a hiding commitment, buyers pay into the contract, and funds only move when the seller reveals the secret that opens that commitment — the same mechanism behind cross-chain atomic swaps and Lightning-style HTLCs, applied to on-chain settlement:
 
-Atomic Patent is a Zero-Knowledge IP registry on Stellar. Engineers, inventors, and creators can:
-
-- Commit a cryptographic hash of their design/code to the blockchain
-- Prove they had the idea at a specific timestamp — without revealing the idea
-- Sell the patent trustlessly via Atomic Swap — the buyer gets the decryption key in the same transaction they send payment
-
-This Soroban implementation makes Atomic Patent:
-
-✅ Trustless (no lawyers, no notaries, no central registry)
-✅ Private (Pedersen Commitments hide your idea until you choose to reveal it)
-✅ Instant (timestamp your IP in seconds, not months)
-✅ Global (a mechanical engineer in Lagos can sell a design to a firm in Tokyo — no intermediary needed)
+- Register an asset under a commitment (`sha256(secret ‖ blinding_factor)`) without revealing either value
+- Initiate a swap for a price, in any supported token
+- Buyer accepts and funds are held in escrow
+- Seller reveals the secret; the contract verifies it and releases payment atomically
+- If the seller never reveals, the buyer recovers their funds after expiry
 
 ## 🚀 Features
 
-- Claim IP: Commit a Pedersen hash of your design to Stellar with a verifiable timestamp
-- Prove Prior Art: On-chain proof that you held the idea before a specific date
-- Atomic Sale: Sell your patent via Atomic Swap — payment and decryption key exchange in one transaction
-- Trustless Verification: If the decryption key is invalid, the payment fails automatically
-- Borderless: Works for any creator, anywhere, with a Stellar wallet
+The `atomic_swap` contract has grown well beyond a bare swap primitive:
+
+- **Escrow & dispute resolution** — buyer/seller disputes, an M-of-N arbitrator committee, time-locked rulings, and non-refundable dispute bonds
+- **Price oracles** — signed price attestations with staleness checks and deviation bounds, so swaps can settle at a live market price
+- **Multi-currency support** — settle in any configured token, not just XLM
+- **Batch operations** — initiate, accept, reveal, cancel, or approve many swaps in one call
+- **Reputation** — seller/buyer reputation scores that can gate swap acceptance
+- **Insurance pool** — optional buyer-side coverage funded by premiums, paid out if a swap fails
+- **Auctions & installments** — auction an asset to the highest bidder, or pay for it in installments
+- **Multi-signer reveal** — require several co-signers before a key reveal completes
+- **Renegotiation, referrals, escrow agents** — price renegotiation mid-swap, referral fees on completion, optional third-party escrow agents for high-value trades
+- **Upgrade safety** — an on-chain schema manifest that validates new contract versions stay backward compatible
 
 ## 🛠️ Quick Start
 
@@ -78,7 +78,7 @@ stellar keys generate deployer --network testnet
 
 ## 🌐 Testnet Deployment Status
 
-[![Deploy to Testnet](https://github.com/AtomicIP/AtomicIP-/actions/workflows/deploy-testnet.yml/badge.svg)](https://github.com/AtomicIP/AtomicIP-/actions/workflows/deploy-testnet.yml)
+[![Deploy to Testnet](https://github.com/paul-motron/SwapIT/actions/workflows/deploy-testnet.yml/badge.svg)](https://github.com/paul-motron/SwapIT/actions/workflows/deploy-testnet.yml)
 
 Latest testnet deployment addresses are published in GitHub Actions deployment summaries. Deployments are triggered automatically on release tags (`v*`).
 
@@ -101,55 +101,45 @@ Release notes are generated automatically from commit messages and PR metadata. 
 
 ## 🎓 Smart Contract API
 
-### IP Registry
+### Asset Commitments
 
 ```rust
-commit_ip(owner, commitment_hash) -> u64          // Timestamp a new IP commitment
-get_ip(ip_id) -> IpRecord                         // Retrieve an IP record
-verify_commitment(ip_id, secret) -> bool          // Verify a commitment against a secret
-list_ip_by_owner(owner) -> Vec<u64>               // List all IP IDs for an owner
-reveal_and_verify_commitments(requests) -> Vec<VerifyResult>  // #458: Verify multiple commitments by revealing secret+blinding_factor (not ZK)
-batch_verify_commitments(requests) -> Vec<VerifyResult>  // #780: Verify multiple commitments with a real ZK (Pedersen+Schnorr) proof
-assign_ip_to_category(ip_id, category_hash)       // #459: Assign IP to a hierarchical category
-list_ip_by_category(owner, category_hash) -> Vec<u64>    // #459: List IPs in a category
-list_owner_categories(owner) -> Vec<BytesN<32>>   // #459: List all categories for an owner
-
-// #464: Anonymous Batch Commitments
-batch_commit_ip_anonymous(blinded_owner, commitment_hashes) -> Vec<u64>  // Register commitments without revealing submitter
-get_anonymous_owner(commitment_hash) -> Option<BytesN<32>>               // Retrieve blinded owner for anonymous commitment
-get_blinded_owner_batch(commitment_hashes) -> Vec<Option<BytesN<32>>>   // Batch lookup of blinded owners
-
-// #465: Batch Escrow
-batch_escrow_commitments(depositor, ip_ids, release_to, timeout) -> BytesN<32>  // Escrow multiple IPs for conditional release
-get_batch_escrow(escrow_id) -> Option<EscrowRecord>                              // Retrieve escrow record
-release_batch_escrow(escrow_id)                                                  // Release escrowed IPs to beneficiary
-cancel_batch_escrow(escrow_id)                                                   // Cancel escrow after timeout
+register_asset(owner, commitment_hash) -> u64     // Register a swappable asset under a hiding commitment
+get_asset(asset_id) -> AssetCommitment            // Retrieve an asset's owner, commitment, and revoked flag
+revoke_asset(owner, asset_id)                     // Revoke an asset so it can no longer be swapped
 ```
 
 ### Atomic Swap
 
 ```rust
-initiate_swap(ip_id, price, buyer) -> u64         // Seller initiates a patent sale
-accept_swap(swap_id, payment)                     // Buyer accepts and sends payment
-reveal_key(swap_id, decryption_key)               // Seller reveals key; payment releases
-cancel_swap(swap_id)                              // Cancel if key is invalid or timeout
+initiate_swap(token, asset_id, seller, price, buyer, ...) -> u64  // Seller initiates a swap
+accept_swap(swap_id)                              // Buyer accepts; payment moves into escrow
+reveal_key(swap_id, seller, secret, blinding_factor)  // Seller reveals the secret; payment releases
+cancel_swap(swap_id, caller)                      // Cancel a pending swap, or an expired accepted one
 
-// #470: Price Oracle Integration
-set_oracle(caller, oracle_address, enabled)       // Admin sets the price oracle contract
+// Price Oracle Integration
+set_oracle(caller, oracle_address, oracle_pubkey, enabled, max_deviation_bps)
 get_oracle_config() -> Option<OracleConfig>       // Query current oracle configuration
 get_oracle_price(token) -> i128                   // Fetch current price from oracle
-initiate_swap_with_oracle_price(...)  -> u64      // Initiate swap at oracle-determined price
+initiate_swap_with_oracle_price(...) -> u64       // Initiate a swap priced from the oracle
+
+// Batch operations
+batch_initiate_swap(token, asset_ids, seller, prices, buyer, ...) -> Vec<u64>
+batch_accept_swaps(swap_ids, buyer)
+batch_reveal_keys(swap_ids, secrets, blinding_factors, seller)
 ```
+
+See [docs/api-reference.md](docs/api-reference.md) for the full surface, including arbitration, auctions, installments, insurance, and reputation.
 
 ## 🧪 Testing
 
 Comprehensive test suite covering:
 
-✅ IP commitment and timestamping
-✅ Pedersen commitment verification
+✅ Asset registration and commitment hiding
 ✅ Atomic swap initiation and acceptance
 ✅ Key reveal and payment release
 ✅ Invalid key rejection and payment refund
+✅ Dispute, arbitration, and rollback flows
 ✅ Error handling and edge cases
 
 Run tests:
@@ -160,29 +150,22 @@ cargo test
 
 ## 🌍 Why This Matters
 
-Intellectual property protection today requires expensive lawyers, slow national patent offices, and jurisdiction-specific filings. This locks out independent inventors and engineers in the Global South from protecting and monetizing their ideas.
+Escrow today usually means a trusted third party who can freeze funds, take a cut, or simply disappear. Atomic swaps remove that party: the same transaction that pays the seller is the one that proves they delivered, enforced by the contract instead of a middleman.
 
-Blockchain Benefits:
+Benefits:
 
-- No central authority to bribe, delay, or deny
-- Cryptographic proof of prior art — accepted anywhere
-- Atomic Swap eliminates counterparty risk in patent sales
+- No custodian holding funds mid-trade
+- Payment and delivery are the same atomic event — no counterparty risk
+- Disputes fall back to an arbitrator committee, not a single point of failure
 - Accessible to anyone with a Stellar wallet
-
-Target Users:
-
-- Independent engineers and inventors
-- Open-source contributors protecting prior art
-- Startups in emerging markets
-- Any creator who can't afford a patent attorney
 
 ## 🗺️ Roadmap
 
-- v1.0 (Current): XLM-only swaps, Pedersen commitment registry
-- v1.1: USDC/EURC payment support for patent sales
-- v2.0: Partial disclosure proofs (reveal claims without full design)
+- v1.0 (Current): Multi-currency swaps, escrow, arbitration, oracles, batch operations
+- v1.1: Expanded settlement token support and fee tooling
+- v2.0: Partial/conditional reveal flows for complex trade terms
 - v3.0: Frontend UI with wallet integration
-- v4.0: Mobile app, legal document generation
+- v4.0: Mobile app
 
 ## 🤝 Contributing
 
