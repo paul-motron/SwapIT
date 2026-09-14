@@ -1,4 +1,4 @@
-/// Regression test suite for AtomicIP atomic swap contract.
+/// Regression test suite for SwapIT atomic swap contract.
 ///
 /// Each test is named after the bug it guards against and references the
 /// threat-model scenario that motivated it.  These tests run on every CI
@@ -7,7 +7,6 @@
 /// See docs/security-audit-checklist.md and docs/threat-model.md for context.
 #[cfg(test)]
 mod regression_tests {
-    use ip_registry::{IpRegistry, IpRegistryClient};
     use soroban_sdk::{
         testutils::{Address as _, Ledger},
         token::StellarAssetClient,
@@ -18,9 +17,7 @@ mod regression_tests {
 
     // ── Shared helpers ────────────────────────────────────────────────────────
 
-    fn setup_registry(env: &Env, owner: &Address) -> (Address, u64, BytesN<32>, BytesN<32>) {
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(env, &registry_id);
+    fn register_test_asset(env: &Env, client: &AtomicSwapClient, owner: &Address) -> (u64, BytesN<32>, BytesN<32>) {
 
         let secret = BytesN::from_array(env, &[0xAAu8; 32]);
         let blinding = BytesN::from_array(env, &[0xBBu8; 32]);
@@ -30,9 +27,8 @@ mod regression_tests {
         preimage.append(&Bytes::from(blinding.clone()));
         let commitment_hash: BytesN<32> = env.crypto().sha256(&preimage).into();
 
-        let ip_id = registry.commit_ip(owner, &commitment_hash);
-        (registry_id, ip_id, secret, blinding)
-    }
+        let asset_id = client.register_asset(owner, &commitment_hash);
+        (asset_id, secret, blinding)}
 
     fn setup_token(env: &Env, admin: &Address, recipient: &Address, amount: i128) -> Address {
         let token_id = env
@@ -42,11 +38,10 @@ mod regression_tests {
         token_id
     }
 
-    fn setup_swap(env: &Env, registry_id: &Address) -> Address {
+    fn setup_swap(env: &Env) -> Address {
         let contract_id = env.register(AtomicSwap, ());
-        AtomicSwapClient::new(env, &contract_id).initialize(registry_id);
-        contract_id
-    }
+        AtomicSwapClient::new(env, &contract_id).initialize();
+        contract_id}
 
     // ── Bug: Duplicate commitment (Threat Model §4) ───────────────────────────
     //
@@ -57,8 +52,9 @@ mod regression_tests {
         env.mock_all_auths();
 
         let owner = Address::generate(&env);
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(&env, &registry_id);
+        let contract_id = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(&env, &contract_id);
+        client.initialize();
 
         let secret = BytesN::from_array(&env, &[0x01u8; 32]);
         let blinding = BytesN::from_array(&env, &[0x02u8; 32]);
@@ -67,9 +63,9 @@ mod regression_tests {
         preimage.append(&Bytes::from(blinding.clone()));
         let hash: BytesN<32> = env.crypto().sha256(&preimage).into();
 
-        registry.commit_ip(&owner, &hash);
+        client.register_asset(&owner, &hash);
 
-        let result = registry.try_commit_ip(&owner, &hash);
+        let result = client.try_register_asset(&owner, &hash);
         assert!(result.is_err(), "duplicate commitment must be rejected");
     }
 
@@ -86,12 +82,12 @@ mod regression_tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &real_owner);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
-        let contract_id = setup_swap(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, _, _) = register_test_asset(&env, &client, &real_owner);
 
-        let result = client.try_initiate_swap(&token_id, &ip_id, &attacker, &500_i128, &buyer, &0_u32, &None);
+        let result = client.try_initiate_swap(&token_id, &asset_id, &attacker, &500_i128, &buyer, &0_u32, &None, &0i128);
         assert!(
             result.is_err(),
             "non-owner must not be able to initiate a swap"
@@ -110,12 +106,12 @@ mod regression_tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
-        let contract_id = setup_swap(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, _, _) = register_test_asset(&env, &client, &seller);
 
-        let result = client.try_initiate_swap(&token_id, &ip_id, &seller, &0_i128, &buyer, &0_u32, &None);
+        let result = client.try_initiate_swap(&token_id, &asset_id, &seller, &0_i128, &buyer, &0_u32, &None, &0i128);
         assert_eq!(
             result.unwrap_err().unwrap(),
             ContractError::PriceMustBeGreaterThanZero,
@@ -136,15 +132,15 @@ mod regression_tests {
         let buyer2 = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer1, 2000);
         StellarAssetClient::new(&env, &token_id).mint(&buyer2, &2000);
-        let contract_id = setup_swap(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, _, _) = register_test_asset(&env, &client, &seller);
 
-        client.initiate_swap(&token_id, &ip_id, &seller, &500_i128, &buyer1, &0_u32, &None, &false);
+        client.initiate_swap(&token_id, &asset_id, &seller, &500_i128, &buyer1, &0_u32, &None, &0i128, &false);
 
-        let result = client.try_initiate_swap(&token_id, &ip_id, &seller, &500_i128, &buyer2, &0_u32, &None);
+        let result = client.try_initiate_swap(&token_id, &asset_id, &seller, &500_i128, &buyer2, &0_u32, &None, &0i128);
         assert_eq!(
             result.unwrap_err().unwrap(),
             ContractError::ActiveSwapAlreadyExistsForThisIpId,
@@ -164,20 +160,19 @@ mod regression_tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
 
-        // Revoke the IP via the registry
-        let registry = IpRegistryClient::new(&env, &registry_id);
-        registry.revoke_ip(&seller, &ip_id);
-
-        let contract_id = setup_swap(&env, &registry_id);
+        let contract_id = setup_swap(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, _, _) = register_test_asset(&env, &client, &seller);
 
-        let result = client.try_initiate_swap(&token_id, &ip_id, &seller, &500_i128, &buyer, &0_u32, &None);
+        // Revoke the asset
+        client.revoke_asset(&seller, &asset_id);
+
+        let result = client.try_initiate_swap(&token_id, &asset_id, &seller, &500_i128, &buyer, &0_u32, &None, &0i128);
         assert_eq!(
             result.unwrap_err().unwrap(),
-            ContractError::IpRevoked,
+            ContractError::AssetRevoked,
             "swap on revoked IP must be rejected"
         );
     }
@@ -195,12 +190,12 @@ mod regression_tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, _correct_secret, _blinding) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
-        let contract_id = setup_swap(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, _correct_secret, _blinding) = register_test_asset(&env, &client, &seller);
 
-        let swap_id = client.initiate_swap(&token_id, &ip_id, &seller, &500_i128, &buyer, &0_u32, &None, &false);
+        let swap_id = client.initiate_swap(&token_id, &asset_id, &seller, &500_i128, &buyer, &0_u32, &None, &0i128, &false);
         client.accept_swap(&swap_id, &buyer);
 
         let wrong_key = BytesN::from_array(&env, &[0xFFu8; 32]);
@@ -230,12 +225,12 @@ mod regression_tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
-        let contract_id = setup_swap(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, _, _) = register_test_asset(&env, &client, &seller);
 
-        let swap_id = client.initiate_swap(&token_id, &ip_id, &seller, &500_i128, &buyer, &0_u32, &None, &false);
+        let swap_id = client.initiate_swap(&token_id, &asset_id, &seller, &500_i128, &buyer, &0_u32, &None, &0i128, &false);
         client.accept_swap(&swap_id, &buyer);
 
         // Advance ledger past expiry
@@ -268,12 +263,12 @@ mod regression_tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
-        let contract_id = setup_swap(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, _, _) = register_test_asset(&env, &client, &seller);
 
-        let swap_id = client.initiate_swap(&token_id, &ip_id, &seller, &500_i128, &buyer, &0_u32, &None, &false);
+        let swap_id = client.initiate_swap(&token_id, &asset_id, &seller, &500_i128, &buyer, &0_u32, &None, &0i128, &false);
         client.accept_swap(&swap_id, &buyer);
 
         // Do NOT advance ledger — swap is not expired
@@ -297,12 +292,12 @@ mod regression_tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, secret, blinding) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 2000);
-        let contract_id = setup_swap(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller);
 
-        let swap_id = client.initiate_swap(&token_id, &ip_id, &seller, &500_i128, &buyer, &0_u32, &None, &false);
+        let swap_id = client.initiate_swap(&token_id, &asset_id, &seller, &500_i128, &buyer, &0_u32, &None, &0i128, &false);
         client.accept_swap(&swap_id, &buyer);
 
         // Build the correct preimage key: secret || blinding
@@ -320,7 +315,7 @@ mod regression_tests {
 
         // A new swap for the same IP must now be accepted
         StellarAssetClient::new(&env, &token_id).mint(&buyer, &500);
-        let result = client.try_initiate_swap(&token_id, &ip_id, &seller, &500_i128, &buyer, &0_u32, &None);
+        let result = client.try_initiate_swap(&token_id, &asset_id, &seller, &500_i128, &buyer, &0_u32, &None, &0i128);
         assert!(
             result.is_ok(),
             "new swap must be allowed after previous swap completes"

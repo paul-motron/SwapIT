@@ -9,7 +9,6 @@
 /// - Conditions re-evaluated at reveal_key time
 #[cfg(test)]
 mod conditional_tests {
-    use ip_registry::{IpRegistry, IpRegistryClient};
     use soroban_sdk::{
         testutils::{Address as _, Ledger},
         token::StellarAssetClient,
@@ -20,9 +19,7 @@ mod conditional_tests {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    fn setup_registry(env: &Env, owner: &Address) -> (Address, u64, BytesN<32>, BytesN<32>) {
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(env, &registry_id);
+    fn register_test_asset(env: &Env, client: &AtomicSwapClient, owner: &Address) -> (u64, BytesN<32>, BytesN<32>) {
 
         let secret = BytesN::from_array(env, &[0xAAu8; 32]);
         let blinding = BytesN::from_array(env, &[0xBBu8; 32]);
@@ -32,9 +29,8 @@ mod conditional_tests {
         preimage.append(&Bytes::from(blinding.clone()));
         let commitment_hash: BytesN<32> = env.crypto().sha256(&preimage).into();
 
-        let ip_id = registry.commit_ip(owner, &commitment_hash);
-        (registry_id, ip_id, secret, blinding)
-    }
+        let asset_id = client.register_asset(owner, &commitment_hash);
+        (asset_id, secret, blinding)}
 
     fn setup_token(env: &Env, admin: &Address, recipient: &Address, amount: i128) -> Address {
         let token_id = env
@@ -44,11 +40,10 @@ mod conditional_tests {
         token_id
     }
 
-    fn setup_swap_contract(env: &Env, registry_id: &Address) -> Address {
+    fn setup_swap_contract(env: &Env) -> Address {
         let contract_id = env.register(AtomicSwap, ());
-        AtomicSwapClient::new(env, &contract_id).initialize(registry_id);
-        contract_id
-    }
+        AtomicSwapClient::new(env, &contract_id).initialize();
+        contract_id}
 
     // ── Tests ─────────────────────────────────────────────────────────────────
 
@@ -62,13 +57,13 @@ mod conditional_tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, secret, blinding) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
-        let contract_id = setup_swap_contract(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller);
 
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
+            &token_id, &asset_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
         );
 
         let conditions = vec![&env];
@@ -90,13 +85,13 @@ mod conditional_tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, secret, blinding) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
-        let contract_id = setup_swap_contract(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller);
 
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
+            &token_id, &asset_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
         );
 
         let conditions = vec![&env, SwapCondition::KeyValid];
@@ -125,14 +120,14 @@ mod conditional_tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, _secret, _blinding) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
-        let contract_id = setup_swap_contract(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, _secret, _blinding) = register_test_asset(&env, &client, &seller);
 
         // price=300, threshold=500 → 300 < 500 → passes
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &300_i128, &buyer, &0_u32, &None, &0_i128, &false,
+            &token_id, &asset_id, &seller, &300_i128, &buyer, &0_u32, &None, &0_i128, &false,
         );
 
         let conditions = vec![&env, SwapCondition::PriceBelow(500)];
@@ -154,14 +149,14 @@ mod conditional_tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, _secret, _blinding) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
-        let contract_id = setup_swap_contract(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, _secret, _blinding) = register_test_asset(&env, &client, &seller);
 
         // price=500, threshold=500 → 500 < 500 is false → fails
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
+            &token_id, &asset_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
         );
 
         let conditions = vec![&env, SwapCondition::PriceBelow(500)];
@@ -182,13 +177,13 @@ mod conditional_tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, _secret, _blinding) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
-        let contract_id = setup_swap_contract(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, _secret, _blinding) = register_test_asset(&env, &client, &seller);
 
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
+            &token_id, &asset_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
         );
 
         // Advance time past the threshold
@@ -214,13 +209,13 @@ mod conditional_tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, _secret, _blinding) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
-        let contract_id = setup_swap_contract(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, _secret, _blinding) = register_test_asset(&env, &client, &seller);
 
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
+            &token_id, &asset_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
         );
 
         // Threshold is in the future
@@ -243,13 +238,13 @@ mod conditional_tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, secret, blinding) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
-        let contract_id = setup_swap_contract(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller);
 
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &300_i128, &buyer, &0_u32, &None, &0_i128, &false,
+            &token_id, &asset_id, &seller, &300_i128, &buyer, &0_u32, &None, &0_i128, &false,
         );
 
         let now = env.ledger().timestamp();
@@ -285,13 +280,13 @@ mod conditional_tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, _secret, _blinding) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
-        let contract_id = setup_swap_contract(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, _secret, _blinding) = register_test_asset(&env, &client, &seller);
 
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &300_i128, &buyer, &0_u32, &None, &0_i128, &false,
+            &token_id, &asset_id, &seller, &300_i128, &buyer, &0_u32, &None, &0_i128, &false,
         );
 
         // PriceBelow(500) passes, but TimeAfter(future) fails
@@ -325,13 +320,13 @@ mod conditional_tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, secret, blinding) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
-        let contract_id = setup_swap_contract(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller);
 
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &300_i128, &buyer, &0_u32, &None, &0_i128, &false,
+            &token_id, &asset_id, &seller, &300_i128, &buyer, &0_u32, &None, &0_i128, &false,
         );
 
         let now = env.ledger().timestamp();
@@ -358,13 +353,13 @@ mod conditional_tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, _secret, _blinding) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
-        let contract_id = setup_swap_contract(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, _secret, _blinding) = register_test_asset(&env, &client, &seller);
 
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
+            &token_id, &asset_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
         );
 
         // Accept normally first
