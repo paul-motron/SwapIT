@@ -42,7 +42,7 @@ use crate::{ContractError, DataKey};
 /// A single exported function entry in the interface manifest.
 ///
 /// `signature` encodes the full function signature as a deterministic string,
-/// e.g. `"initiate_swap(token:Address,ip_id:u64,...)->u64"`.
+/// e.g. `"initiate_swap(token:Address,asset_id:u64,...)->u64"`.
 /// Any change — including argument reordering — is treated as a breaking change.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -244,14 +244,14 @@ pub fn build_v1_schema(env: &Env) -> ContractSchema {
         };
     }
 
-    f!("initialize",               "initialize(ip_registry:Address)->()");
+    f!("initialize",               "initialize()->()");
     f!("set_admin",                "set_admin(new_admin:Address)->()");
     f!("pause",                    "pause(caller:Address)->()");
     f!("unpause",                  "unpause(caller:Address)->()");
     f!("upgrade",                  "upgrade(new_wasm_hash:BytesN<32>)->()");
     f!("validate_upgrade",         "validate_upgrade(new_wasm_hash:BytesN<32>,new_schema:ContractSchema)->Result<(),ContractError>");
-    f!("initiate_swap",            "initiate_swap(token:Address,ip_id:u64,seller:Address,price:i128,buyer:Address,required_approvals:u32,referrer:Option<Address>)->u64");
-    f!("batch_initiate_swap",      "batch_initiate_swap(token:Address,ip_ids:Vec<u64>,seller:Address,prices:Vec<i128>,buyer:Address,required_approvals:u32,referrer:Option<Address>)->Vec<u64>");
+    f!("initiate_swap",            "initiate_swap(token:Address,asset_id:u64,seller:Address,price:i128,buyer:Address,required_approvals:u32,referrer:Option<Address>)->u64");
+    f!("batch_initiate_swap",      "batch_initiate_swap(token:Address,asset_ids:Vec<u64>,seller:Address,prices:Vec<i128>,buyer:Address,required_approvals:u32,referrer:Option<Address>)->Vec<u64>");
     f!("accept_swap",              "accept_swap(swap_id:u64)->()");
     f!("accept_swap_partial",      "accept_swap_partial(swap_id:u64,quantity:u32)->()");
     f!("renegotiate_swap",         "renegotiate_swap(swap_id:u64,new_price:i128)->()");
@@ -270,7 +270,7 @@ pub fn build_v1_schema(env: &Env) -> ContractSchema {
     f!("get_swap",                 "get_swap(swap_id:u64)->Option<SwapRecord>");
     f!("get_swaps_by_seller",      "get_swaps_by_seller(seller:Address)->Option<Vec<u64>>");
     f!("get_swaps_by_buyer",       "get_swaps_by_buyer(buyer:Address)->Option<Vec<u64>>");
-    f!("get_swaps_by_ip",          "get_swaps_by_ip(ip_id:u64)->Option<Vec<u64>>");
+    f!("get_swaps_by_asset",          "get_swaps_by_asset(asset_id:u64)->Option<Vec<u64>>");
     f!("swap_count",               "swap_count()->u64");
     f!("get_swap_history",         "get_swap_history(swap_id:u64)->Vec<SwapHistoryEntry>");
     f!("get_cancellation_reason",  "get_cancellation_reason(swap_id:u64)->Option<Bytes>");
@@ -345,7 +345,7 @@ pub fn build_v1_schema(env: &Env) -> ContractSchema {
     k!("Admin");
     k!("ProtocolConfig");
     k!("Paused");
-    k!("IpSwaps");
+    k!("AssetSwaps");
     k!("SwapHistory");
     k!("SwapApprovals");
     k!("CancelReason");

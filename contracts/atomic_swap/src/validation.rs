@@ -174,13 +174,13 @@ pub fn require_swap_expired(env: &Env, swap: &SwapRecord) {
 /// # Arguments
 ///
 /// * `env` - The Soroban environment
-/// * `ip_id` - The IP ID to check
+/// * `asset_id` - The IP ID to check
 ///
 /// # Panics
 ///
 /// Panics with `ActiveSwapAlreadyExistsForThisIpId` error if an active swap exists.
-pub fn require_no_active_swap(env: &Env, ip_id: u64) {
-    if env.storage().persistent().has(&DataKey::ActiveSwap(ip_id)) {
+pub fn require_no_active_swap(env: &Env, asset_id: u64) {
+    if env.storage().persistent().has(&DataKey::ActiveSwap(asset_id)) {
         env.panic_with_error(Error::from_contract_error(ContractError::SwapExists as u32));
     }
 }
@@ -220,7 +220,7 @@ pub fn require_admin(env: &Env, caller: &Address) {
 // //     /// Convenience constructor so every test doesn't repeat all fields.
 // //     fn make_swap(env: &Env, status: SwapStatus, expiry: u64) -> SwapRecord {
 // //         SwapRecord {
-// //             ip_id: 1,
+// //             asset_id: 1,
 // //             seller: Address::generate(env),
 // //             buyer: Address::generate(env),
 // //             price: 100,
@@ -297,7 +297,7 @@ pub fn require_admin(env: &Env, caller: &Address) {
 // //         let env = Env::default();
 // //         let seller = Address::generate(&env);
 // //         let swap = SwapRecord {
-// //             ip_id: 1,
+// //             asset_id: 1,
 // //             seller: seller.clone(),
 // //             buyer: Address::generate(&env),
 // //             price: 100,
@@ -326,7 +326,7 @@ pub fn require_admin(env: &Env, caller: &Address) {
 // //         let seller = Address::generate(&env);
 // //         let not_seller = Address::generate(&env);
 // //         let swap = SwapRecord {
-// //             ip_id: 1,
+// //             asset_id: 1,
 // //             seller: seller.clone(),
 // //             buyer: Address::generate(&env),
 // //             price: 100,
@@ -352,7 +352,7 @@ pub fn require_admin(env: &Env, caller: &Address) {
 // //         let env = Env::default();
 // //         let buyer = Address::generate(&env);
 // //         let swap = SwapRecord {
-// //             ip_id: 1,
+// //             asset_id: 1,
 // //             seller: Address::generate(&env),
 // //             buyer: buyer.clone(),
 // //             price: 100,
@@ -381,7 +381,7 @@ pub fn require_admin(env: &Env, caller: &Address) {
 // //         let buyer = Address::generate(&env);
 // //         let not_buyer = Address::generate(&env);
 // //         let swap = SwapRecord {
-// //             ip_id: 1,
+// //             asset_id: 1,
 // //             seller: Address::generate(&env),
 // //             buyer: buyer.clone(),
 // //             price: 100,
@@ -407,7 +407,7 @@ pub fn require_admin(env: &Env, caller: &Address) {
 // //         let env = Env::default();
 // //         let seller = Address::generate(&env);
 // //         let swap = SwapRecord {
-// //             ip_id: 1,
+// //             asset_id: 1,
 // //             seller: seller.clone(),
 // //             buyer: Address::generate(&env),
 // //             price: 100,
@@ -434,7 +434,7 @@ pub fn require_admin(env: &Env, caller: &Address) {
 // //         let env = Env::default();
 // //         let buyer = Address::generate(&env);
 // //         let swap = SwapRecord {
-// //             ip_id: 1,
+// //             asset_id: 1,
 // //             seller: Address::generate(&env),
 // //             buyer: buyer.clone(),
 // //             price: 100,
@@ -464,7 +464,7 @@ pub fn require_admin(env: &Env, caller: &Address) {
 // //         let buyer = Address::generate(&env);
 // //         let neither = Address::generate(&env);
 // //         let swap = SwapRecord {
-// //             ip_id: 1,
+// //             asset_id: 1,
 // //             seller: seller.clone(),
 // //             buyer: buyer.clone(),
 // //             price: 100,

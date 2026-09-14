@@ -16,7 +16,7 @@ pub enum DataKey {
     NextId,
     /// The IpRegistry contract address set once at initialization.
     IpRegistry,
-    /// Maps ip_id → swap_id for any swap currently in Pending or Accepted state.
+    /// Maps asset_id → swap_id for any swap currently in Pending or Accepted state.
     /// Cleared when a swap reaches Completed or Cancelled.
     ActiveSwap(u64),
     /// Maps seller address → Vec<u64> of all swap IDs they have initiated.
@@ -25,8 +25,8 @@ pub enum DataKey {
     BuyerSwaps(Address),
     Admin,
     ProtocolConfig,
-    /// Maps ip_id → Vec<u64> of all swap IDs ever created for that IP.
-    IpSwaps(u64),
+    /// Maps asset_id → Vec<u64> of all swap IDs ever created for that IP.
+    AssetSwaps(u64),
     /// Whether the contract is paused (blocks initiate_swap and accept_swap).
     Paused,
     /// #253: Maps swap_id → Vec<SwapHistoryEntry> audit trail.
@@ -45,7 +45,7 @@ pub enum DataKey {
     SwapReferrer(u64),
     /// #347: Maps auction_id → AuctionRecord for IP auctions.
     Auction(u64),
-    /// #347: Maps ip_id → auction_id for active auction.
+    /// #347: Maps asset_id → auction_id for active auction.
     ActiveAuction(u64),
     /// #347: Maps auction_id → Vec<(bidder, amount)> for bid history.
     AuctionBids(u64),
@@ -89,7 +89,7 @@ pub enum SwapStatus {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SwapInitiatedEvent {
     pub swap_id: u64,
-    pub ip_id: u64,
+    pub asset_id: u64,
     pub seller: Address,
     pub buyer: Address,
     pub price: i128,
@@ -327,7 +327,7 @@ pub struct BatchSignedEvent {
 #[derive(Clone)]
 pub struct AuctionRecord {
     pub auction_id: u64,
-    pub ip_id: u64,
+    pub asset_id: u64,
     pub seller: Address,
     pub token: Address,
     pub min_bid: i128,
@@ -342,7 +342,7 @@ pub struct AuctionRecord {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AuctionStartedEvent {
     pub auction_id: u64,
-    pub ip_id: u64,
+    pub asset_id: u64,
     pub seller: Address,
     pub min_bid: i128,
     pub end_time: u64,
