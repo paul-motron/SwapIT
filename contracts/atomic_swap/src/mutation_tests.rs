@@ -5,8 +5,7 @@
 /// skipped auth) are caught by the test suite.
 #[cfg(test)]
 mod mutation_tests {
-    use super::*;
-    use ip_registry::{IpRegistry, IpRegistryClient};
+    use crate::*;
     use soroban_sdk::{
         testutils::Address as _,
         token::StellarAssetClient,
@@ -15,26 +14,25 @@ mod mutation_tests {
 
     fn setup_swap(
         env: &Env,
-        ip_id: u64,
+        asset_id: u64,
         seller: &Address,
         buyer: &Address,
         price: i128,
         token: &Address,
         status: SwapStatus,
     ) -> u64 {
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(env, &registry_id);
+        let _ = asset_id;
+        let contract_id = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(env, &contract_id);
+        client.initialize();
+
         let secret = BytesN::from_array(env, &[1u8; 32]);
         let blinding = BytesN::from_array(env, &[2u8; 32]);
         let mut preimage = Bytes::new(env);
         preimage.append(&Bytes::from(secret));
         preimage.append(&Bytes::from(blinding));
         let hash = env.crypto().sha256(&preimage).into();
-        let id = registry.commit_ip(seller, &hash, &0u32);
-
-        let contract_id = env.register(AtomicSwap, ());
-        let client = AtomicSwapClient::new(env, &contract_id);
-        client.initialize(&registry_id);
+        let id = client.register_asset(seller, &hash);
 
         if status == SwapStatus::Pending {
             client.initiate_swap(
@@ -69,22 +67,20 @@ mod mutation_tests {
         let buyer = Address::generate(&env);
         let token = Address::generate(&env);
 
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(&env, &registry_id);
+        let contract_id = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(&env, &contract_id);
+        client.initialize();
+
         let secret = BytesN::from_array(&env, &[1u8; 32]);
         let blinding = BytesN::from_array(&env, &[2u8; 32]);
         let mut preimage = Bytes::new(&env);
         preimage.append(&Bytes::from(secret));
         preimage.append(&Bytes::from(blinding));
         let hash = env.crypto().sha256(&preimage).into();
-        let ip_id = registry.commit_ip(&seller, &hash, &0u32);
-
-        let contract_id = env.register(AtomicSwap, ());
-        let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        let asset_id = client.register_asset(&seller, &hash);
 
         client.initiate_swap(
-            &token, &ip_id, &seller, &0, &buyer, &0_u32, &None, &0i128, &false,
+            &token, &asset_id, &seller, &0, &buyer, &0_u32, &None, &0i128, &false,
         );
     }
 
@@ -97,25 +93,23 @@ mod mutation_tests {
         let buyer = Address::generate(&env);
         let token = Address::generate(&env);
 
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(&env, &registry_id);
+        let contract_id = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(&env, &contract_id);
+        client.initialize();
+
         let secret = BytesN::from_array(&env, &[1u8; 32]);
         let blinding = BytesN::from_array(&env, &[2u8; 32]);
         let mut preimage = Bytes::new(&env);
         preimage.append(&Bytes::from(secret));
         preimage.append(&Bytes::from(blinding));
         let hash = env.crypto().sha256(&preimage).into();
-        let ip_id = registry.commit_ip(&seller, &hash, &0u32);
-
-        let contract_id = env.register(AtomicSwap, ());
-        let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        let asset_id = client.register_asset(&seller, &hash);
 
         client.initiate_swap(
-            &token, &ip_id, &seller, &1000, &buyer, &0_u32, &None, &0i128, &false,
+            &token, &asset_id, &seller, &1000, &buyer, &0_u32, &None, &0i128, &false,
         );
         client.initiate_swap(
-            &token, &ip_id, &seller, &1000, &buyer, &0_u32, &None, &0i128, &false,
+            &token, &asset_id, &seller, &1000, &buyer, &0_u32, &None, &0i128, &false,
         );
     }
 
@@ -131,7 +125,7 @@ mod mutation_tests {
         let swap_id = setup_swap(&env, 1, &seller, &buyer, 1000, &token, SwapStatus::Accepted);
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&Address::generate(&env));
+        client.initialize();
 
         client.accept_swap(&swap_id);
     }
@@ -149,7 +143,7 @@ mod mutation_tests {
         let swap_id = setup_swap(&env, 2, &seller, &buyer, 1000, &token, SwapStatus::Accepted);
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&Address::generate(&env));
+        client.initialize();
 
         let secret = BytesN::from_array(&env, &[1u8; 32]);
         let blinding = BytesN::from_array(&env, &[2u8; 32]);
@@ -168,7 +162,7 @@ mod mutation_tests {
         let swap_id = setup_swap(&env, 3, &seller, &buyer, 1000, &token, SwapStatus::Accepted);
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&Address::generate(&env));
+        client.initialize();
 
         let bad_secret = BytesN::from_array(&env, &[99u8; 32]);
         let bad_blinding = BytesN::from_array(&env, &[99u8; 32]);
@@ -187,7 +181,7 @@ mod mutation_tests {
         let swap_id = setup_swap(&env, 4, &seller, &buyer, 1000, &token, SwapStatus::Completed);
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&Address::generate(&env));
+        client.initialize();
 
         client.cancel_swap(&swap_id, &seller);
     }
@@ -201,9 +195,11 @@ mod mutation_tests {
         let buyer = Address::generate(&env);
         let token = Address::generate(&env);
 
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(&env, &registry_id);
-        let mut ip_ids = Vec::new(&env);
+        let contract_id = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(&env, &contract_id);
+        client.initialize();
+
+        let mut asset_ids = Vec::new(&env);
         let mut prices = Vec::new(&env);
         for i in 0u64..51 {
             let s = BytesN::from_array(&env, &[(i as u8); 32]);
@@ -212,18 +208,14 @@ mod mutation_tests {
             pre.append(&Bytes::from(s));
             pre.append(&Bytes::from(b));
             let h = env.crypto().sha256(&pre).into();
-            let id = registry.commit_ip(&seller, &h, &0u32);
-            ip_ids.push_back(id);
+            let id = client.register_asset(&seller, &h);
+            asset_ids.push_back(id);
             prices.push_back(1000);
         }
 
-        let contract_id = env.register(AtomicSwap, ());
-        let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
-
         client.batch_initiate_swap(
             &token,
-            &ip_ids,
+            &asset_ids,
             &seller,
             &prices,
             &buyer,
@@ -244,7 +236,7 @@ mod mutation_tests {
         let swap_id = setup_swap(&env, 5, &seller, &buyer, 1000, &token, SwapStatus::Accepted);
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&Address::generate(&env));
+        client.initialize();
 
         client.cancel_expired_swap(&swap_id, &buyer);
     }
@@ -257,23 +249,21 @@ mod mutation_tests {
         let buyer = Address::generate(&env);
         let token = Address::generate(&env);
 
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(&env, &registry_id);
+        let contract_id = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(&env, &contract_id);
+        client.initialize();
+
         let secret = BytesN::from_array(&env, &[1u8; 32]);
         let blinding = BytesN::from_array(&env, &[2u8; 32]);
         let mut preimage = Bytes::new(&env);
         preimage.append(&Bytes::from(secret));
         preimage.append(&Bytes::from(blinding));
         let hash = env.crypto().sha256(&preimage).into();
-        let ip_id = registry.commit_ip(&seller, &hash, &0u32);
-
-        let contract_id = env.register(AtomicSwap, ());
-        let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        let asset_id = client.register_asset(&seller, &hash);
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             client.initiate_swap(
-                &token, &ip_id, &seller, &1, &buyer, &0_u32, &None, &0i128, &false,
+                &token, &asset_id, &seller, &1, &buyer, &0_u32, &None, &0i128, &false,
             );
         }));
         assert!(result.is_ok(), "price of 1 must be accepted");
@@ -288,22 +278,20 @@ mod mutation_tests {
         let buyer = Address::generate(&env);
         let token = Address::generate(&env);
 
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(&env, &registry_id);
+        let contract_id = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(&env, &contract_id);
+        client.initialize();
+
         let secret = BytesN::from_array(&env, &[1u8; 32]);
         let blinding = BytesN::from_array(&env, &[2u8; 32]);
         let mut preimage = Bytes::new(&env);
         preimage.append(&Bytes::from(secret));
         preimage.append(&Bytes::from(blinding));
         let hash = env.crypto().sha256(&preimage).into();
-        let ip_id = registry.commit_ip(&seller, &hash, &0u32);
-
-        let contract_id = env.register(AtomicSwap, ());
-        let client = AtomicSwapClient::new(&env, &contract_id);
-        client.initialize(&registry_id);
+        let asset_id = client.register_asset(&seller, &hash);
 
         client.initiate_swap(
-            &token, &ip_id, &seller, &(-1i128), &buyer, &0_u32, &None, &0i128, &false,
+            &token, &asset_id, &seller, &(-1i128), &buyer, &0_u32, &None, &0i128, &false,
         );
     }
 }
