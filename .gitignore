@@ -68,3 +68,4 @@ coverage/
 vrickish.md
 TODO.local.md
 NOTES.md
+**/proptest-regressions/

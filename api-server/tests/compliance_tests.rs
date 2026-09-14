@@ -1,4 +1,4 @@
-/// Compliance tests for Atomic Patent API (#563)
+/// Compliance tests for SwapIT API (#563)
 ///
 /// Verifies that API responses, schemas, and behaviors meet regulatory
 /// and policy requirements: standard error formats, required response fields,

@@ -1,4 +1,4 @@
-//! Dependency Injection Container for Atomic Patent API Server.
+//! Dependency Injection Container for SwapIT API Server.
 //!
 //! # Issue #865: RPC Client Wiring
 //!

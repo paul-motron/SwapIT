@@ -8,7 +8,7 @@ const {
 
 const buyer = () => ({
   id: "buyer-1",
-  assetType: "patent",
+  assetType: "domain-name",
   price: 5000,
   maxPrice: 5000,
   minCondition: "good",
@@ -19,7 +19,7 @@ const buyer = () => ({
 
 const seller = () => ({
   id: "seller-1",
-  assetType: "patent",
+  assetType: "domain-name",
   price: 4500,
   minPrice: 4000,
   condition: "excellent",

@@ -638,7 +638,7 @@ mod tests {
             let unique = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
             let mut path = std::env::temp_dir();
             path.push(format!(
-                "atomicip-audit-test-{label}-{}-{unique}.jsonl",
+                "swapit-audit-test-{label}-{}-{unique}.jsonl",
                 std::process::id()
             ));
             Self(path)

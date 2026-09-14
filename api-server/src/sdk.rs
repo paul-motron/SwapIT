@@ -36,7 +36,7 @@ impl SdkGenerator {
     pub fn generate_typescript(config: &SdkConfig) -> GeneratedSdk {
         let code = format!(
             r#"/**
- * Atomic Patent API Client
+ * SwapIT API Client
  * Auto-generated from OpenAPI specification
  * 
  * @package {package_name}
@@ -97,7 +97,7 @@ export interface SwapRecord {{
   expiry: number;
 }}
 
-export class AtomicPatentClient {{
+export class SwapITClient {{
   private baseUrl: string;
   private apiVersion: string;
   private headers: Record<string, string>;
@@ -189,7 +189,7 @@ export class AtomicPatentClient {{
   }}
 }}
 
-export default AtomicPatentClient;
+export default SwapITClient;
 "#,
             package_name = config.package_name,
             version = config.package_version,
@@ -209,7 +209,7 @@ export default AtomicPatentClient;
     pub fn generate_python(config: &SdkConfig) -> GeneratedSdk {
         let code = format!(
             r#"""
-Atomic Patent API Client
+SwapIT API Client
 Auto-generated from OpenAPI specification
 
 @package {package_name}
@@ -275,8 +275,8 @@ class SwapRecord:
     status: str
     expiry: int
 
-class AtomicPatentClient:
-    """Atomic Patent API Client"""
+class SwapITClient:
+    """SwapIT API Client"""
 
     def __init__(self, base_url: str = "{base_url}", api_version: str = "{api_version}"):
         self.base_url = base_url
@@ -422,7 +422,7 @@ type SwapRecord struct {{
 	Expiry       int64  `json:"expiry"`
 }}
 
-// Client represents the Atomic Patent API client
+// Client represents the SwapIT API client
 type Client struct {{
 	BaseURL string
 	Version string
@@ -524,17 +524,17 @@ func (c *Client) parseResponse(body io.Reader) (*ApiResponse, error) {{
     /// Generate Rust SDK
     pub fn generate_rust(config: &SdkConfig) -> GeneratedSdk {
         let code = format!(
-            r#"//! Atomic Patent API Client
+            r#"//! SwapIT API Client
 //! Auto-generated from OpenAPI specification
 //!
 //! # Example
 //!
 //! ```no_run
-//! use {package_name}::AtomicPatentClient;
+//! use {package_name}::SwapITClient;
 //!
 //! #[tokio::main]
 //! async fn main() {{
-//!     let client = AtomicPatentClient::new("{base_url}");
+//!     let client = SwapITClient::new("{base_url}");
 //!     // Use client...
 //! }}
 //! ```
@@ -603,12 +603,12 @@ pub struct SwapRecord {{
     pub expiry: u64,
 }}
 
-pub struct AtomicPatentClient {{
+pub struct SwapITClient {{
     base_url: String,
     client: reqwest::Client,
 }}
 
-impl AtomicPatentClient {{
+impl SwapITClient {{
     /// Create a new client
     pub fn new(base_url: impl Into<String>) -> Self {{
         Self {{
@@ -710,7 +710,7 @@ mod tests {
         let config = get_test_config();
         let sdk = SdkGenerator::generate_typescript(&config);
         assert_eq!(sdk.language, "TypeScript");
-        assert!(sdk.code.contains("AtomicPatentClient"));
+        assert!(sdk.code.contains("SwapITClient"));
         assert!(sdk.code.contains("commitIp"));
     }
 
@@ -719,7 +719,7 @@ mod tests {
         let config = get_test_config();
         let sdk = SdkGenerator::generate_python(&config);
         assert_eq!(sdk.language, "Python");
-        assert!(sdk.code.contains("AtomicPatentClient"));
+        assert!(sdk.code.contains("SwapITClient"));
         assert!(sdk.code.contains("commit_ip"));
     }
 

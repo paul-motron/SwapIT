@@ -66,9 +66,9 @@ mod validation_fuzz_tests;
 #[derive(OpenApi)]
 #[openapi(
     info(
-        title = "Atomic Patent API",
+        title = "SwapIT API",
         version = "1.0.0",
-        description = "Machine-readable specification for the Atomic Patent Soroban smart contract interface."
+        description = "Machine-readable specification for the SwapIT Soroban smart contract interface."
     ),
     paths(
         handlers::commit_ip,
@@ -485,7 +485,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let spec: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(spec["info"]["title"], "Atomic Patent API");
+        assert_eq!(spec["info"]["title"], "SwapIT API");
         assert!(spec["paths"].is_object());
         assert!(spec["components"]["schemas"].is_object());
     }
