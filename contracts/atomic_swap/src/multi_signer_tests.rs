@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod multi_signer_tests {
-    use ip_registry::{IpRegistry, IpRegistryClient};
     use soroban_sdk::{
         testutils::Address as _,
         token::StellarAssetClient,
@@ -11,21 +10,22 @@ mod multi_signer_tests {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    fn setup_registry(env: &Env, owner: &Address) -> (Address, u64, BytesN<32>, BytesN<32>) {
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(env, &registry_id);
-
-        let secret = BytesN::from_array(env, &[0xAAu8; 32]);
-        let blinding = BytesN::from_array(env, &[0xBBu8; 32]);
+    fn register_test_asset(
+        env: &Env,
+        client: &AtomicSwapClient,
+        owner: &Address,
+        seed: u8,
+    ) -> (u64, BytesN<32>, BytesN<32>) {
+        let secret = BytesN::from_array(env, &[seed; 32]);
+        let blinding = BytesN::from_array(env, &[seed.wrapping_add(0x40); 32]);
 
         let mut preimage = Bytes::new(env);
         preimage.append(&Bytes::from(secret.clone()));
         preimage.append(&Bytes::from(blinding.clone()));
         let commitment_hash: BytesN<32> = env.crypto().sha256(&preimage).into();
 
-        let ip_id = registry.commit_ip(owner, &commitment_hash, &0u32);
-        (registry_id, ip_id, secret, blinding)
-    }
+        let asset_id = client.register_asset(owner, &commitment_hash);
+        (asset_id, secret, blinding)}
 
     fn setup_token(env: &Env, admin: &Address, recipient: &Address, amount: i128) -> Address {
         let token_id = env
@@ -35,12 +35,11 @@ mod multi_signer_tests {
         token_id
     }
 
-    fn setup_contract(env: &Env, registry_id: &Address) -> AtomicSwapClient {
+    fn setup_contract(env: &Env) -> AtomicSwapClient {
         let contract_id = env.register(AtomicSwap, ());
         let client = AtomicSwapClient::new(env, &contract_id);
-        client.initialize(registry_id);
-        client
-    }
+        client.initialize();
+        client}
 
     // ── Tests ─────────────────────────────────────────────────────────────────
 
@@ -53,16 +52,16 @@ mod multi_signer_tests {
         let co_signer = Address::generate(&env);
         let buyer = Address::generate(&env);
 
-        let (registry_id, ip_id, secret, blinding) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
-        let client = setup_contract(&env, &registry_id);
+        let client = setup_contract(&env);
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller, 0xAA);
 
         let mut signers = Vec::new(&env);
         signers.push_back(seller.clone());
         signers.push_back(co_signer.clone());
 
         let swap_id = client.initiate_swap_with_signers(
-            &token_id, &ip_id, &seller, &1000i128, &buyer, &signers,
+            &token_id, &asset_id, &seller, &1000i128, &buyer, &signers,
         );
         client.accept_swap(&swap_id);
 
@@ -81,16 +80,16 @@ mod multi_signer_tests {
         let co_signer = Address::generate(&env);
         let buyer = Address::generate(&env);
 
-        let (registry_id, ip_id, secret, blinding) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
-        let client = setup_contract(&env, &registry_id);
+        let client = setup_contract(&env);
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller, 0xAA);
 
         let mut signers = Vec::new(&env);
         signers.push_back(seller.clone());
         signers.push_back(co_signer.clone());
 
         let swap_id = client.initiate_swap_with_signers(
-            &token_id, &ip_id, &seller, &1000i128, &buyer, &signers,
+            &token_id, &asset_id, &seller, &1000i128, &buyer, &signers,
         );
         client.accept_swap(&swap_id);
 
@@ -114,16 +113,16 @@ mod multi_signer_tests {
         let outsider = Address::generate(&env);
         let buyer = Address::generate(&env);
 
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
-        let client = setup_contract(&env, &registry_id);
+        let client = setup_contract(&env);
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller, 0xAA);
 
         let mut signers = Vec::new(&env);
         signers.push_back(seller.clone());
         signers.push_back(co_signer.clone());
 
         let swap_id = client.initiate_swap_with_signers(
-            &token_id, &ip_id, &seller, &1000i128, &buyer, &signers,
+            &token_id, &asset_id, &seller, &1000i128, &buyer, &signers,
         );
         client.accept_swap(&swap_id);
 
@@ -140,16 +139,16 @@ mod multi_signer_tests {
         let co_signer = Address::generate(&env);
         let buyer = Address::generate(&env);
 
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
-        let client = setup_contract(&env, &registry_id);
+        let client = setup_contract(&env);
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller, 0xAA);
 
         let mut signers = Vec::new(&env);
         signers.push_back(seller.clone());
         signers.push_back(co_signer.clone());
 
         let swap_id = client.initiate_swap_with_signers(
-            &token_id, &ip_id, &seller, &1000i128, &buyer, &signers,
+            &token_id, &asset_id, &seller, &1000i128, &buyer, &signers,
         );
         client.accept_swap(&swap_id);
 
@@ -168,9 +167,9 @@ mod multi_signer_tests {
         let signer3 = Address::generate(&env);
         let buyer = Address::generate(&env);
 
-        let (registry_id, ip_id, secret, blinding) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
-        let client = setup_contract(&env, &registry_id);
+        let client = setup_contract(&env);
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller, 0xAA);
 
         let mut signers = Vec::new(&env);
         signers.push_back(seller.clone());
@@ -178,7 +177,7 @@ mod multi_signer_tests {
         signers.push_back(signer3.clone());
 
         let swap_id = client.initiate_swap_with_signers(
-            &token_id, &ip_id, &seller, &1000i128, &buyer, &signers,
+            &token_id, &asset_id, &seller, &1000i128, &buyer, &signers,
         );
         client.accept_swap(&swap_id);
 
@@ -207,16 +206,16 @@ mod multi_signer_tests {
         let co_signer = Address::generate(&env);
         let buyer = Address::generate(&env);
 
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
-        let client = setup_contract(&env, &registry_id);
+        let client = setup_contract(&env);
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller, 0xAA);
 
         let mut signers = Vec::new(&env);
         signers.push_back(seller.clone());
         signers.push_back(co_signer.clone());
 
         let swap_id = client.initiate_swap_with_signers(
-            &token_id, &ip_id, &seller, &1000i128, &buyer, &signers,
+            &token_id, &asset_id, &seller, &1000i128, &buyer, &signers,
         );
 
         // Swap is still Pending — sign must fail (must be Accepted first)
@@ -232,13 +231,13 @@ mod multi_signer_tests {
         let seller = Address::generate(&env);
         let buyer = Address::generate(&env);
 
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
-        let client = setup_contract(&env, &registry_id);
+        let client = setup_contract(&env);
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller, 0xAA);
 
         let empty_signers: Vec<Address> = Vec::new(&env);
         let result = client.try_initiate_swap_with_signers(
-            &token_id, &ip_id, &seller, &1000i128, &buyer, &empty_signers,
+            &token_id, &asset_id, &seller, &1000i128, &buyer, &empty_signers,
         );
         assert!(result.is_err(), "empty signers list must be rejected");
     }
@@ -254,14 +253,14 @@ mod multi_signer_tests {
         seller: &Address,
         co_signer: &Address,
         buyer: &Address,
-        ip_id: u64,
+        asset_id: u64,
         price: i128,
     ) -> u64 {
         let mut signers = Vec::new(env);
         signers.push_back(seller.clone());
         signers.push_back(co_signer.clone());
 
-        let swap_id = client.initiate_swap_with_signers(token_id, &ip_id, seller, &price, buyer, &signers);
+        let swap_id = client.initiate_swap_with_signers(token_id, &asset_id, seller, &price, buyer, &signers);
         client.accept_swap(&swap_id);
         swap_id
     }
@@ -275,10 +274,10 @@ mod multi_signer_tests {
         let co_signer = Address::generate(&env);
         let buyer = Address::generate(&env);
 
-        let (registry_id, ip_id1, secret1, blinding1) = setup_registry(&env, &seller);
-        let (_, ip_id2, secret2, blinding2) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &seller, &buyer, 10_000_000);
-        let client = setup_contract(&env, &registry_id);
+        let client = setup_contract(&env);
+        let (ip_id1, secret1, blinding1) = register_test_asset(&env, &client, &seller, 0xAA);
+        let (ip_id2, secret2, blinding2) = register_test_asset(&env, &client, &seller, 0xCC);
 
         let swap_id1 = setup_accepted_swap_with_signers(
             &env, &client, &token_id, &seller, &co_signer, &buyer, ip_id1, 1000,
@@ -314,12 +313,12 @@ mod multi_signer_tests {
         let outsider = Address::generate(&env);
         let buyer = Address::generate(&env);
 
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
-        let client = setup_contract(&env, &registry_id);
+        let client = setup_contract(&env);
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller, 0xAA);
 
         let swap_id = setup_accepted_swap_with_signers(
-            &env, &client, &token_id, &seller, &co_signer, &buyer, ip_id, 1000,
+            &env, &client, &token_id, &seller, &co_signer, &buyer, asset_id, 1000,
         );
 
         let mut ids = Vec::new(&env);
@@ -337,12 +336,12 @@ mod multi_signer_tests {
         let co_signer = Address::generate(&env);
         let buyer = Address::generate(&env);
 
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
-        let client = setup_contract(&env, &registry_id);
+        let client = setup_contract(&env);
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller, 0xAA);
 
         let swap_id = setup_accepted_swap_with_signers(
-            &env, &client, &token_id, &seller, &co_signer, &buyer, ip_id, 1000,
+            &env, &client, &token_id, &seller, &co_signer, &buyer, asset_id, 1000,
         );
 
         let mut ids = Vec::new(&env);
@@ -363,15 +362,15 @@ mod multi_signer_tests {
         let co_signer = Address::generate(&env);
         let buyer = Address::generate(&env);
 
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &seller, &buyer, 1_000_000);
-        let client = setup_contract(&env, &registry_id);
+        let client = setup_contract(&env);
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller, 0xAA);
 
         let mut signers = Vec::new(&env);
         signers.push_back(seller.clone());
         signers.push_back(co_signer.clone());
         let swap_id = client.initiate_swap_with_signers(
-            &token_id, &ip_id, &seller, &1000i128, &buyer, &signers,
+            &token_id, &asset_id, &seller, &1000i128, &buyer, &signers,
         );
         // NOT accepted — still Pending
 
@@ -390,10 +389,10 @@ mod multi_signer_tests {
         let co_signer = Address::generate(&env);
         let buyer = Address::generate(&env);
 
-        let (registry_id, ip_id1, secret1, blinding1) = setup_registry(&env, &seller);
-        let (_, ip_id2, secret2, blinding2) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &seller, &buyer, 10_000_000);
-        let client = setup_contract(&env, &registry_id);
+        let client = setup_contract(&env);
+        let (ip_id1, secret1, blinding1) = register_test_asset(&env, &client, &seller, 0xAA);
+        let (ip_id2, secret2, blinding2) = register_test_asset(&env, &client, &seller, 0xCC);
 
         let swap_id1 = setup_accepted_swap_with_signers(
             &env, &client, &token_id, &seller, &co_signer, &buyer, ip_id1, 1000,

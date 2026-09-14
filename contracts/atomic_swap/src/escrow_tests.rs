@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use ip_registry::{IpRegistry, IpRegistryClient};
     use soroban_sdk::{
         testutils::{Address as _, Ledger},
         token::StellarAssetClient,
@@ -11,9 +10,7 @@ mod tests {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    fn setup_registry(env: &Env, owner: &Address) -> (Address, u64, BytesN<32>, BytesN<32>) {
-        let registry_id = env.register(IpRegistry, ());
-        let registry = IpRegistryClient::new(env, &registry_id);
+    fn register_test_asset(env: &Env, client: &AtomicSwapClient, owner: &Address) -> (u64, BytesN<32>, BytesN<32>) {
 
         let secret = BytesN::from_array(env, &[2u8; 32]);
         let blinding = BytesN::from_array(env, &[3u8; 32]);
@@ -23,9 +20,8 @@ mod tests {
         preimage.append(&soroban_sdk::Bytes::from(blinding.clone()));
         let commitment_hash: BytesN<32> = env.crypto().sha256(&preimage).into();
 
-        let ip_id = registry.commit_ip(owner, &commitment_hash, &0u32);
-        (registry_id, ip_id, secret, blinding)
-    }
+        let asset_id = client.register_asset(owner, &commitment_hash);
+        (asset_id, secret, blinding)}
 
     fn setup_token(env: &Env, admin: &Address, recipient: &Address, amount: i128) -> Address {
         let token_id = env
@@ -35,11 +31,10 @@ mod tests {
         token_id
     }
 
-    fn setup_swap_contract(env: &Env, registry_id: &Address) -> Address {
+    fn setup_swap_contract(env: &Env) -> Address {
         let contract_id = env.register(AtomicSwap, ());
-        AtomicSwapClient::new(env, &contract_id).initialize(registry_id);
-        contract_id
-    }
+        AtomicSwapClient::new(env, &contract_id).initialize();
+        contract_id}
 
     // ── Tests ─────────────────────────────────────────────────────────────────
 
@@ -53,14 +48,14 @@ mod tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, secret, blinding) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
-        let contract_id = setup_swap_contract(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, secret, blinding) = register_test_asset(&env, &client, &seller);
 
         let timeout = env.ledger().timestamp() + 3600;
         let swap_id =
-            client.initiate_escrow_swap(&token_id, &ip_id, &seller, &500_i128, &buyer, &timeout);
+            client.initiate_escrow_swap(&token_id, &asset_id, &seller, &500_i128, &buyer, &timeout);
 
         // Swap is Pending after initiation
         assert_eq!(
@@ -93,14 +88,14 @@ mod tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
-        let contract_id = setup_swap_contract(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, _, _) = register_test_asset(&env, &client, &seller);
 
         let timeout = env.ledger().timestamp() + 100;
         let swap_id =
-            client.initiate_escrow_swap(&token_id, &ip_id, &seller, &500_i128, &buyer, &timeout);
+            client.initiate_escrow_swap(&token_id, &asset_id, &seller, &500_i128, &buyer, &timeout);
         client.escrow_deposit(&swap_id);
 
         // Advance ledger past timeout
@@ -124,14 +119,14 @@ mod tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
-        let contract_id = setup_swap_contract(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, _, _) = register_test_asset(&env, &client, &seller);
 
         let timeout = env.ledger().timestamp() + 9999;
         let swap_id =
-            client.initiate_escrow_swap(&token_id, &ip_id, &seller, &500_i128, &buyer, &timeout);
+            client.initiate_escrow_swap(&token_id, &asset_id, &seller, &500_i128, &buyer, &timeout);
         client.escrow_deposit(&swap_id);
 
         // Timeout has NOT passed — must panic
@@ -149,14 +144,14 @@ mod tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
-        let contract_id = setup_swap_contract(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, _, _) = register_test_asset(&env, &client, &seller);
 
         // Regular atomic swap
         let swap_id = client.initiate_swap(
-            &token_id, &ip_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
+            &token_id, &asset_id, &seller, &500_i128, &buyer, &0_u32, &None, &0_i128, &false,
         );
 
         // escrow_deposit on an atomic swap must panic
@@ -174,14 +169,14 @@ mod tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
-        let contract_id = setup_swap_contract(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, _, _) = register_test_asset(&env, &client, &seller);
 
         let timeout = env.ledger().timestamp() + 3600;
         let swap_id =
-            client.initiate_escrow_swap(&token_id, &ip_id, &seller, &500_i128, &buyer, &timeout);
+            client.initiate_escrow_swap(&token_id, &asset_id, &seller, &500_i128, &buyer, &timeout);
         client.escrow_deposit(&swap_id);
         client.escrow_deposit(&swap_id); // second deposit — must panic
     }
@@ -196,14 +191,14 @@ mod tests {
         let buyer = Address::generate(&env);
         let admin = Address::generate(&env);
 
-        let (registry_id, ip_id, _, _) = setup_registry(&env, &seller);
         let token_id = setup_token(&env, &admin, &buyer, 1000);
-        let contract_id = setup_swap_contract(&env, &registry_id);
+        let contract_id = setup_swap_contract(&env);
         let client = AtomicSwapClient::new(&env, &contract_id);
+        let (asset_id, _, _) = register_test_asset(&env, &client, &seller);
 
         let timeout = env.ledger().timestamp() + 3600;
         let swap_id =
-            client.initiate_escrow_swap(&token_id, &ip_id, &seller, &500_i128, &buyer, &timeout);
+            client.initiate_escrow_swap(&token_id, &asset_id, &seller, &500_i128, &buyer, &timeout);
 
         let mode: SwapMode = env.as_contract(&contract_id, || {
             env.storage()
