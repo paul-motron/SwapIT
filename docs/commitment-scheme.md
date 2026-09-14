@@ -2,7 +2,7 @@
 
 ## Overview
 
-AtomicIP uses a Pedersen commitment scheme to allow inventors to prove they held an idea at a specific time without revealing the idea itself. This document explains how to construct valid commitment hashes and secrets.
+SwapIT uses a Pedersen commitment scheme to allow inventors to prove they held an idea at a specific time without revealing the idea itself. This document explains how to construct valid commitment hashes and secrets.
 
 ## How It Works
 
@@ -320,7 +320,7 @@ fn verify_ip_workflow(env: &Env, commitment_hash: &BytesN<32>) -> bool {
 
 ### Why SHA-256?
 
-AtomicIP uses SHA-256 because:
+SwapIT uses SHA-256 because:
 - It's cryptographically secure
 - It's widely supported in Soroban
 - It produces fixed-size 32-byte outputs
@@ -333,7 +333,7 @@ True Pedersen commitments use elliptic curve cryptography and have special prope
 - Perfectly hiding: Commitment reveals nothing about the message
 - Computationally binding: Cannot change the message after committing
 
-AtomicIP uses a simpler SHA-256-based scheme because:
+SwapIT uses a simpler SHA-256-based scheme because:
 - It's easier to implement and verify
 - It's sufficient for the use case (proving prior art)
 - It has lower gas costs
@@ -343,7 +343,7 @@ The trade-off is that SHA-256 commitments are not homomorphic, but this property
 
 ## Batch Verification: Reveal-and-Compare (Issue #458)
 
-AtomicIP supports **batch verification** that checks multiple commitments in a single on-chain
+SwapIT supports **batch verification** that checks multiple commitments in a single on-chain
 call and folds the results into a deterministic aggregate proof.
 
 There are two batch entry points, named for exactly what they disclose:
@@ -509,7 +509,7 @@ group order), not as raw hash preimage bytes — this is a different encoding fr
 generator with no known discrete log relative to `G`:
 
 ```
-H = ristretto255_hash_to_group(SHA512("AtomicIP/PedersenCommitment/H/v1"))
+H = ristretto255_hash_to_group(SHA512("SwapIT/PedersenCommitment/H/v1"))
 ```
 
 Anyone can independently recompute `H` — see `contracts/ip_registry/src/zk_commitment.rs` for the
@@ -524,7 +524,7 @@ non-interactive via Fiat-Shamir:
 `(k_secret, k_blinding)`:
 
 1. `R = k_secret·G + k_blinding·H`
-2. `e = sha256("AtomicIP/HidingCommitmentProof/v1" || commitment || R) mod L` (the Fiat-Shamir challenge)
+2. `e = sha256("SwapIT/HidingCommitmentProof/v1" || commitment || R) mod L` (the Fiat-Shamir challenge)
 3. `s_secret = k_secret + e·secret`, `s_blinding = k_blinding + e·blinding_factor` (mod L)
 4. Submit `HidingCommitmentProof { r: R, s_secret, s_blinding }`
 
@@ -587,9 +587,9 @@ only difference is how each individual request is verified.
 ## Questions?
 
 If you have questions about the commitment scheme:
-- Open a [GitHub Issue](https://github.com/AtomicIP/AtomicIP-/issues)
-- Join our [Discord community](https://discord.gg/atomicip)
-- Email: support@atomicip.io
+- Open a [GitHub Issue](https://github.com/paul-motron/SwapIT/issues)
+- Join our [Discord community](https://discord.gg/swapit)
+- Email: support@swapit.io
 
 ## Commitment Renewal
 

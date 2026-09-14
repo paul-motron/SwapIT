@@ -1,6 +1,6 @@
 # Integration Guide for Wallet Providers
 
-This guide helps wallet providers integrate Atomic Patent IP registry and atomic swap functionality.
+This guide helps wallet providers integrate SwapIT IP registry and atomic swap functionality.
 
 ## Contract Interface
 
@@ -408,14 +408,14 @@ subscription {
 
 ## Support
 
-- GitHub Issues: https://github.com/AtomicIP/AtomicIP-/issues
-- Documentation: https://github.com/AtomicIP/AtomicIP-/tree/main/docs
+- GitHub Issues: https://github.com/paul-motron/SwapIT/issues
+- Documentation: https://github.com/paul-motron/SwapIT/tree/main/docs
 
 ---
 
 ## Observability — Distributed Tracing Setup
 
-Atomic Patent API ships with OpenTelemetry (OTel) instrumentation that exports
+SwapIT API ships with OpenTelemetry (OTel) instrumentation that exports
 spans via the OTLP protocol. Any OTLP-compatible backend works out of the box:
 Jaeger, Datadog Agent, Grafana Tempo, Honeycomb, OpenTelemetry Collector, etc.
 

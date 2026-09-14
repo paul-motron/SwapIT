@@ -1,6 +1,6 @@
 # Security Considerations for IP Creators
 
-This guide covers best practices for protecting your intellectual property when using AtomicIP.
+This guide covers best practices for protecting your intellectual property when using SwapIT.
 
 ## Secret Management
 
