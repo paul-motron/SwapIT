@@ -275,7 +275,7 @@ pub fn build_v1_schema(env: &Env) -> ContractSchema {
     f!("get_swap_history",         "get_swap_history(swap_id:u64)->Vec<SwapHistoryEntry>");
     f!("get_cancellation_reason",  "get_cancellation_reason(swap_id:u64)->Option<Bytes>");
     f!("get_protocol_config",      "get_protocol_config()->ProtocolConfig");
-    f!("admin_set_protocol_config","admin_set_protocol_config(protocol_fee_bps:u32,treasury:Address,dispute_window_seconds:u64,dispute_resolution_timeout_seconds:u64,referral_fee_bps:u32)->()");
+    f!("admin_set_protocol_config","admin_set_protocol_config(caller:Address,protocol_fee_bps:u32,treasury:Address,dispute_window_seconds:u64,dispute_resolution_timeout_seconds:u64,referral_fee_bps:u32)->()");
 
     let mut errors: Vec<ErrorEntry> = Vec::new(env);
 

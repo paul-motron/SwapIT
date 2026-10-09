@@ -120,10 +120,91 @@ mod snapshot_tests {
         assert_eq!(swap.price, 1000);
     }
 
-    // snapshot_protocol_config_defaults removed: there is no `get_protocol_config`
-    // getter (see the `protocol_config` comment in lib.rs — ProtocolConfig can't
-    // be returned from a contract function today), so this snapshot had nothing
-    // real to assert against.
+    #[test]
+    fn snapshot_protocol_config_defaults() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(&env, &contract_id);
+        client.initialize();
+
+        let config = client.get_protocol_config();
+        assert_eq!(config.protocol_fee_bps, 250);
+        assert_eq!(config.referral_fee_bps, 100);
+        assert_eq!(config.dispute_window_seconds, 86400);
+        assert_eq!(config.dispute_timeout_secs, 604800);
+        assert_eq!(config.arbitration_timeout_seconds, 1_209_600);
+    }
+
+    #[test]
+    fn snapshot_protocol_config_persists_after_admin_update() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(&env, &contract_id);
+        client.initialize();
+
+        let admin = Address::generate(&env);
+        let new_treasury = Address::generate(&env);
+        client.admin_set_protocol_config(&admin, &500u32, &new_treasury, &3600u64, &7200u64, &50u32);
+
+        let config = client.get_protocol_config();
+        assert_eq!(config.protocol_fee_bps, 500);
+        assert_eq!(config.treasury, new_treasury);
+        assert_eq!(config.dispute_window_seconds, 3600);
+        assert_eq!(config.dispute_timeout_secs, 7200);
+        assert_eq!(config.referral_fee_bps, 50);
+        // Not exposed as an admin_set_protocol_config parameter — must survive unchanged.
+        assert_eq!(config.arbitration_timeout_seconds, 1_209_600);
+
+        // A second admin, calling with the same identity, must still work and
+        // must not reset fields back to their defaults.
+        client.admin_set_protocol_config(&admin, &600u32, &new_treasury, &3600u64, &7200u64, &50u32);
+        assert_eq!(client.get_protocol_config().protocol_fee_bps, 600);
+    }
+
+    #[test]
+    #[should_panic]
+    fn snapshot_protocol_config_rejects_non_admin() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(&env, &contract_id);
+        client.initialize();
+
+        let admin = Address::generate(&env);
+        client.admin_set_protocol_config(&admin, &500u32, &admin, &3600u64, &7200u64, &50u32);
+
+        let outsider = Address::generate(&env);
+        client.admin_set_protocol_config(&outsider, &1u32, &outsider, &1u64, &1u64, &1u32);
+    }
+
+    #[test]
+    fn snapshot_admin_set_protocol_config_bootstraps_its_own_admin() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AtomicSwap, ());
+        let client = AtomicSwapClient::new(&env, &contract_id);
+        client.initialize();
+
+        // admin_set_protocol_config bootstraps its own first-caller-is-admin
+        // the same way initiate_swap/set_oracle do (DataKey::Admin in
+        // persistent storage). This is intentionally a separate admin
+        // concept from set_admin/require_admin's instance-storage admin,
+        // which gates arbitration/pause and is set up explicitly per swap
+        // scenario in arbitration_tests.rs — the two must not be merged.
+        let admin = Address::generate(&env);
+        client.admin_set_protocol_config(&admin, &500u32, &admin, &3600u64, &7200u64, &50u32);
+        assert_eq!(client.get_protocol_config().protocol_fee_bps, 500);
+
+        // A different address cannot then also "bootstrap" as the
+        // protocol-config admin — the first caller already claimed it.
+        let outsider = Address::generate(&env);
+        let result = client.try_admin_set_protocol_config(
+            &outsider, &1u32, &outsider, &1u64, &1u64, &1u32,
+        );
+        assert!(result.is_err());
+    }
 
     #[test]
     fn snapshot_swap_history_preserves_entries() {

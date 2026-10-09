@@ -272,9 +272,9 @@ pub struct ProtocolConfig {
     pub arbitration_timeout_seconds: u64,
     /// #781: How long (seconds) a committee ruling must wait before
     /// `execute_ruling` can move funds. Default: 48 hours = 172_800 seconds.
-    /// Note: `store_protocol_config` is a pre-existing no-op stub, so this
-    /// field cannot actually be reconfigured at runtime today — see its
-    /// definition below.
+    /// Not exposed as a parameter of `admin_set_protocol_config` today, so
+    /// it keeps whatever value was already stored (or the default) across
+    /// config updates — see that function's definition below.
     pub arbitration_ruling_delay_secs: u64,
 }
 
@@ -1649,12 +1649,12 @@ impl AtomicSwap {
 
     /// #781: Refunds the winning party's dispute bond and forfeits the
     /// losing party's bond. Forfeited bonds go to the current `DataKey::Admin`
-    /// address rather than `protocol_config().treasury` — `protocol_config()`
-    /// (below) unconditionally returns a hardcoded placeholder address
-    /// regardless of what's configured (a pre-existing storage bug this PR
-    /// does not fix); routing real forfeited value through it would be a new,
-    /// self-inflicted loss path, so real value is deliberately kept on the
-    /// one admin-storage path that actually round-trips correctly today.
+    /// address rather than `protocol_config().treasury`. `protocol_config()`
+    /// now persists real values set via `admin_set_protocol_config` (it used
+    /// to unconditionally return a hardcoded placeholder regardless of
+    /// configuration), but routing forfeited bonds there would still be a
+    /// separate product decision about where that value should land, not
+    /// something to change as a side effect of a storage-layer fix.
     fn settle_dispute_bonds(
         env: &Env,
         swap_id: u64,
@@ -2364,9 +2364,11 @@ impl AtomicSwap {
     //     Ok(())
     // }
 
-    /// Updates the protocol config.
+    /// Updates the protocol config. Admin-only; bootstraps the caller as
+    /// admin on first call, same as the other admin-gated setters.
     pub fn admin_set_protocol_config(
         env: Env,
+        caller: Address,
         protocol_fee_bps: u32,
         treasury: Address,
         dispute_window_seconds: u64,
@@ -2384,11 +2386,10 @@ impl AtomicSwap {
             ));
         }
 
-        let caller = env.current_contract_address();
+        caller.require_auth();
         let admin: Address = if let Some(admin) = env.storage().persistent().get(&DataKey::Admin) {
             admin
         } else {
-            caller.require_auth();
             env.storage().persistent().set(&DataKey::Admin, &caller);
             env.storage()
                 .persistent()
@@ -2402,7 +2403,9 @@ impl AtomicSwap {
             ));
         }
 
-        admin.require_auth();
+        // Preserve the existing arbitration timing fields rather than
+        // resetting them to defaults on every config update.
+        let existing = Self::protocol_config(&env);
         Self::store_protocol_config(
             &env,
             &ProtocolConfig {
@@ -2411,20 +2414,24 @@ impl AtomicSwap {
                 dispute_window_seconds,
                 dispute_timeout_secs,
                 referral_fee_bps,
-                arbitration_timeout_seconds: 1_209_600,
-                arbitration_ruling_delay_secs: DEFAULT_ARBITRATION_RULING_DELAY_SECONDS,
+                arbitration_timeout_seconds: existing.arbitration_timeout_seconds,
+                arbitration_ruling_delay_secs: existing.arbitration_ruling_delay_secs,
             },
         );
     }
 
-    fn store_protocol_config(_env: &Env, _config: &ProtocolConfig) {
-        // ProtocolConfig storage temporarily disabled due to trait generation issues
-        // env.storage().persistent().set(&DataKey::ProtocolConfig, config);
-        // env.storage().persistent().extend_ttl(&DataKey::ProtocolConfig, LEDGER_BUMP, LEDGER_BUMP);
+    fn store_protocol_config(env: &Env, config: &ProtocolConfig) {
+        env.storage().persistent().set(&DataKey::ProtocolConfig, config);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::ProtocolConfig, LEDGER_BUMP, LEDGER_BUMP);
     }
 
     fn protocol_config(env: &Env) -> ProtocolConfig {
-        // Return default config since storage is disabled
+        if let Some(config) = env.storage().persistent().get(&DataKey::ProtocolConfig) {
+            return config;
+        }
+        // Default config, used until admin_set_protocol_config is called.
         ProtocolConfig {
             protocol_fee_bps: 250,
             treasury: Address::from_string(&soroban_sdk::String::from_str(
@@ -2439,8 +2446,11 @@ impl AtomicSwap {
         }
     }
 
-    // get_protocol_config removed - ProtocolConfig can't be returned from contract functions
-    // Use individual getters instead if needed
+    /// Returns the current protocol config (defaults until
+    /// `admin_set_protocol_config` is called).
+    pub fn get_protocol_config(env: Env) -> ProtocolConfig {
+        Self::protocol_config(&env)
+    }
 
     /// List all swap IDs initiated by a seller. Returns `None` if the seller has no swaps.
     pub fn get_swaps_by_seller(env: Env, seller: Address) -> Option<Vec<u64>> {
